@@ -35,7 +35,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install dependencies
         run: npm ci
@@ -55,17 +55,6 @@ jobs:
           TAIL=$(tail -n 60 /tmp/cap-sync.log | sed ':a;N;$!ba;s/\n/%0A/g' | head -c 6000)
           echo "::error::npx cap sync failed. Log tail:%0A$TAIL"
           exit 1
-
-      - name: Debug - show cap sync output
-        run: |
-          ENC=$(cat /tmp/cap-sync.log | sed ':a;N;$!ba;s/\n/%0A/g' | head -c 4000)
-          echo "::warning::cap sync output:%0A$ENC"
-
-      - name: Debug - check cordova plugins folder
-        run: |
-          OUT=$(ls -la android/capacitor-cordova-android-plugins 2>&1; echo "---find---"; find android -iname "cordova.variables.gradle" 2>&1; echo "---settings.gradle---"; cat android/settings.gradle 2>&1)
-          ENC=$(echo "$OUT" | sed ':a;N;$!ba;s/\n/%0A/g' | head -c 4000)
-          echo "::warning::Cordova plugins folder state:%0A$ENC"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
