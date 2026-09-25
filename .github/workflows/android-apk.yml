@@ -77,13 +77,11 @@ jobs:
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git fetch origin main
-          git checkout -B ci-debug-log origin/main
           mkdir -p .ci-logs
-          tail -n 500 /tmp/gradle-build.log > .ci-logs/gradle-build.log
+          tail -n 500 /tmp/gradle-build.log > .ci-logs/gradle-build.log 2>/dev/null || echo "no gradle log captured" > .ci-logs/gradle-build.log
           git add .ci-logs/gradle-build.log
           git commit -m "CI debug log for ${{ github.sha }}"
-          git push origin ci-debug-log --force
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ci-debug-log" --force
 
       - name: Locate APK
         id: apk
