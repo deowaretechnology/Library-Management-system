@@ -22,6 +22,7 @@ import {
   FolderTree,
   Tags,
   LogOut,
+  ShieldCheck,
 } from "lucide-react";
 import { logout } from "@/lib/actions/auth";
 
@@ -59,6 +60,11 @@ const NAV = [
   ]},
 ];
 
+// Super-Admin-only — added to the "System" group at render time, never for Librarian /
+// Library Staff (they can't reach /admin/staff anyway; requireRole(["SUPER_ADMIN"]) in
+// lib/actions/staff.ts blocks it server-side, this just keeps the link out of their view).
+const STAFF_NAV_ITEM = { href: "/admin/staff", label: "Staff", icon: ShieldCheck };
+
 export function AdminSidebar({
   userName,
   userRole,
@@ -67,6 +73,10 @@ export function AdminSidebar({
   userRole?: string;
 }) {
   const pathname = usePathname();
+  const nav =
+    userRole === "SUPER_ADMIN"
+      ? NAV.map((group) => (group.section === "System" ? { ...group, items: [...group.items, STAFF_NAV_ITEM] } : group))
+      : NAV;
 
   return (
     <nav className="hidden w-64 shrink-0 flex-col bg-ink-950 md:flex">
@@ -83,7 +93,7 @@ export function AdminSidebar({
 
       {/* Nav */}
       <div className="flex-1 overflow-y-auto px-3 pb-4">
-        {NAV.map((group) => (
+        {nav.map((group) => (
           <div key={group.section} className="mb-5">
             <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               {group.section}
