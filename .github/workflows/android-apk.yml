@@ -38,13 +38,25 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      # ubuntu-latest GitHub-hosted runners already ship the Android SDK
-      # (cmdline-tools + sdkmanager on PATH, ANDROID_HOME preset) — no
-      # separate setup action needed, just make sure the platform/build-tools
-      # this project needs are installed and licenses are accepted.
+      # Install the Android SDK ourselves rather than relying on a third-party
+      # action or whatever happens to be preinstalled on the runner image —
+      # this is the same manual method Google's own CI docs use, so it
+      # doesn't depend on runner-image contents that change over time.
+      - name: Set up Android SDK
+        run: |
+          set -e
+          export ANDROID_SDK_ROOT="$HOME/android-sdk"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          curl -sSL -o /tmp/cmdline-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
       - name: Install required SDK platform & build-tools
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
