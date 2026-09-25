@@ -3,6 +3,7 @@
 import { useActionState, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { login, LoginState } from "@/lib/actions/auth";
 
 const initialState: LoginState = {};
@@ -52,7 +53,15 @@ function LoginForm() {
       </div>
 
       {/* Form panel */}
-      <div className="flex items-center justify-center px-6 py-16">
+      <div className="relative flex items-center justify-center px-6 py-16">
+        <Link
+          href="/"
+          className="absolute left-4 top-4 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-ink-950 sm:left-6 sm:top-6"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Home
+        </Link>
+
         <div className="w-full max-w-sm">
           <h2 className="font-serif text-2xl text-ink-950">Sign in</h2>
 
