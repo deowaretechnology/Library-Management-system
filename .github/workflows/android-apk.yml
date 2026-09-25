@@ -64,7 +64,26 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
+
+      # This repo's normal log viewer (Actions UI) needs an interactive GitHub
+      # login and isn't reachable from every environment that might be
+      # debugging this workflow, so on failure also commit the tail of the
+      # build log to a throwaway branch — a plain `git fetch` is enough to
+      # read it back from anywhere with repo access.
+      - name: Save build log on failure
+        if: failure()
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git fetch origin main
+          git checkout -B ci-debug-log origin/main
+          mkdir -p .ci-logs
+          tail -n 500 /tmp/gradle-build.log > .ci-logs/gradle-build.log
+          git add .ci-logs/gradle-build.log
+          git commit -m "CI debug log for ${{ github.sha }}"
+          git push origin ci-debug-log --force
 
       - name: Locate APK
         id: apk
