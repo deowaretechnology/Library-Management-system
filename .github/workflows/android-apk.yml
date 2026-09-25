@@ -56,6 +56,11 @@ jobs:
           echo "::error::npx cap sync failed. Log tail:%0A$TAIL"
           exit 1
 
+      - name: Debug - show cap sync output
+        run: |
+          ENC=$(cat /tmp/cap-sync.log | sed ':a;N;$!ba;s/\n/%0A/g' | head -c 4000)
+          echo "::warning::cap sync output:%0A$ENC"
+
       - name: Debug - check cordova plugins folder
         run: |
           OUT=$(ls -la android/capacitor-cordova-android-plugins 2>&1; echo "---find---"; find android -iname "cordova.variables.gradle" 2>&1; echo "---settings.gradle---"; cat android/settings.gradle 2>&1)
