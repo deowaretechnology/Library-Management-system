@@ -55,8 +55,14 @@ export function SiteFooter() {
           </div>
         </div>
       </div>
-      <div className="border-t border-white/10 py-5 text-center text-xs text-cream-100/60">
-        College Library Management System
+      <div className="border-t border-white/10 py-5">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 text-xs text-cream-100/60">
+          <p>College Library Management System</p>
+          <div className="flex gap-4">
+            <Link href="/privacy-policy" className="hover:text-white">Privacy Policy</Link>
+            <Link href="/terms" className="hover:text-white">Terms &amp; Conditions</Link>
+          </div>
+        </div>
       </div>
     </footer>
   );
