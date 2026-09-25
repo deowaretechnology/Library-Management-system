@@ -32,6 +32,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # android/capacitor-cordova-android-plugins is a generated glue folder
+      # (gitignored, like node_modules) that Capacitor rebuilds from
+      # package.json — it has to be regenerated here before Gradle runs,
+      # the same as any normal Capacitor CI pipeline.
+      - name: Capacitor sync
+        run: npx cap sync android
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
