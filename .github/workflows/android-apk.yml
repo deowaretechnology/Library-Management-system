@@ -45,7 +45,16 @@ jobs:
       # package.json — it has to be regenerated here before Gradle runs,
       # the same as any normal Capacitor CI pipeline.
       - name: Capacitor sync
-        run: npx cap sync android
+        id: cap_sync
+        continue-on-error: true
+        run: npx cap sync android 2>&1 | tee /tmp/cap-sync.log
+
+      - name: Report Capacitor sync failure
+        if: steps.cap_sync.outcome == 'failure'
+        run: |
+          TAIL=$(tail -n 60 /tmp/cap-sync.log | sed ':a;N;$!ba;s/\n/%0A/g' | head -c 6000)
+          echo "::error::npx cap sync failed. Log tail:%0A$TAIL"
+          exit 1
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
