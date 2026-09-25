@@ -60,7 +60,7 @@ export default async function HomePage() {
       <section className="relative isolate overflow-hidden bg-ink-950">
         {/* Drop any real photo of your library/campus in public/hero-library.jpg — this is what renders here. */}
         <img
-          src="/hero-library.png"
+          src="/hero-library.jpg"
           alt="Students studying in the college library"
           className="absolute inset-0 h-full w-full object-cover"
         />
@@ -120,29 +120,34 @@ export default async function HomePage() {
               </Link>
             </div>
           </div>
-
-          {/* Stats bar */}
-          <div className="relative z-10 -mb-10 mt-16 grid grid-cols-2 gap-6 rounded-xl bg-white p-8 shadow-xl sm:grid-cols-5">
-            {[
-              { icon: BookOpen, value: `${stats.titleCount}+`, label: "Books Available" },
-              { icon: Users, value: `${stats.studentCount}+`, label: "Students" },
-              { icon: BookOpen, value: `${stats.copyCount}+`, label: "Book Copies" },
-              { icon: FileText, value: `${stats.categoryCount}+`, label: "Categories" },
-              { icon: Building2, value: `${stats.visitsToday}+`, label: "Visitors Today" },
-            ].map((s) => (
-              <div key={s.label} className="flex items-center gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-forest-50 text-forest-600">
-                  <s.icon className="h-5 w-5" />
-                </span>
-                <div>
-                  <p className="font-serif text-xl text-ink-950">{s.value}</p>
-                  <p className="text-xs text-slate-500">{s.label}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <div className="h-16 sm:h-24" aria-hidden="true" />
         </div>
       </section>
+
+      {/* Stats bar — deliberately a sibling of the hero <section>, not nested inside it: the
+          hero has overflow-hidden (to keep its background photo/gradients inside its box), which
+          would clip this card's overlap effect if it lived in there instead. */}
+      <div className="mx-auto -mt-16 max-w-6xl px-6 sm:-mt-24">
+        <div className="relative z-10 grid grid-cols-2 gap-6 rounded-xl bg-white p-8 shadow-xl sm:grid-cols-5">
+          {[
+            { icon: BookOpen, value: `${stats.titleCount}+`, label: "Books Available" },
+            { icon: Users, value: `${stats.studentCount}+`, label: "Students" },
+            { icon: BookOpen, value: `${stats.copyCount}+`, label: "Book Copies" },
+            { icon: FileText, value: `${stats.categoryCount}+`, label: "Categories" },
+            { icon: Building2, value: `${stats.visitsToday}+`, label: "Visitors Today" },
+          ].map((s) => (
+            <div key={s.label} className="flex items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-forest-50 text-forest-600">
+                <s.icon className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="font-serif text-xl text-ink-950">{s.value}</p>
+                <p className="text-xs text-slate-500">{s.label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Services */}
       <section id="services" className="mx-auto max-w-6xl px-6 pb-20 pt-24">
