@@ -120,14 +120,16 @@ export default async function HomePage() {
               </Link>
             </div>
           </div>
-          <div className="h-16 sm:h-24" aria-hidden="true" />
+          <div className="h-32 sm:h-40" aria-hidden="true" />
         </div>
       </section>
 
       {/* Stats bar — deliberately a sibling of the hero <section>, not nested inside it: the
           hero has overflow-hidden (to keep its background photo/gradients inside its box), which
-          would clip this card's overlap effect if it lived in there instead. */}
-      <div className="mx-auto -mt-16 max-w-6xl px-6 sm:-mt-24">
+          would clip this card's overlap effect if it lived in there instead. The spacer above
+          (h-32/h-40) is taller than this pull-up (-mt-10/-mt-16) on purpose — that gap is what
+          keeps the card from crowding the buttons, while the card still floats over the seam. */}
+      <div className="mx-auto -mt-10 max-w-6xl px-6 sm:-mt-16">
         <div className="relative z-10 grid grid-cols-2 gap-6 rounded-xl bg-white p-8 shadow-xl sm:grid-cols-5">
           {[
             { icon: BookOpen, value: `${stats.titleCount}+`, label: "Books Available" },
