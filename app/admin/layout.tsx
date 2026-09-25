@@ -1,5 +1,6 @@
 import { getSession } from "@/lib/auth/session";
 import { AdminSidebar } from "@/components/AdminSidebar";
+import { AdminMobileNav } from "@/components/AdminMobileNav";
 import { logout } from "@/lib/actions/auth";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -8,11 +9,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <div className="flex min-h-screen">
       <AdminSidebar userName={session?.name} userRole={session?.role} />
-      <div className="flex-1">
-        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-          <p className="text-sm text-slate-500">Signed in as {session?.name} · {session?.role}</p>
+      <div className="min-w-0 flex-1">
+        <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <AdminMobileNav userName={session?.name} userRole={session?.role} />
+            <p className="truncate text-sm text-slate-500">
+              Signed in as {session?.name} · {session?.role}
+            </p>
+          </div>
           <form action={logout}>
-            <button className="text-sm text-slate-500 hover:text-slate-900" type="submit">
+            <button className="shrink-0 text-sm text-slate-500 hover:text-slate-900" type="submit">
               Sign out
             </button>
           </form>

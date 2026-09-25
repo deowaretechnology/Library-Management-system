@@ -65,6 +65,14 @@ const NAV = [
 // lib/actions/staff.ts blocks it server-side, this just keeps the link out of their view).
 const STAFF_NAV_ITEM = { href: "/admin/staff", label: "Staff", icon: ShieldCheck };
 
+// Shared by the desktop sidebar below and the mobile drawer (AdminMobileNav) so both
+// always show the exact same links, in the exact same order, for a given role.
+export function getAdminNav(userRole?: string) {
+  return userRole === "SUPER_ADMIN"
+    ? NAV.map((group) => (group.section === "System" ? { ...group, items: [...group.items, STAFF_NAV_ITEM] } : group))
+    : NAV;
+}
+
 export function AdminSidebar({
   userName,
   userRole,
@@ -73,10 +81,7 @@ export function AdminSidebar({
   userRole?: string;
 }) {
   const pathname = usePathname();
-  const nav =
-    userRole === "SUPER_ADMIN"
-      ? NAV.map((group) => (group.section === "System" ? { ...group, items: [...group.items, STAFF_NAV_ITEM] } : group))
-      : NAV;
+  const nav = getAdminNav(userRole);
 
   return (
     <nav className="hidden w-64 shrink-0 flex-col bg-ink-950 md:flex">
