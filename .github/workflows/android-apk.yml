@@ -1,0 +1,84 @@
+name: Build Android APK
+
+# Builds the Capacitor Android app (android/) into a real, installable .apk.
+#
+# This runs on GitHub's own build machines — not in any local sandbox — because
+# a full Android build needs the Android SDK + Google's Maven repo, which some
+# restricted environments (like Claude's cloud sandbox) cannot reach. GitHub
+# Actions runners have normal internet access, so the build always succeeds here
+# even when it can't be done locally.
+#
+# The app itself is just a WebView shell pointed at the live site
+# (see capacitor.config.ts) — this workflow does not need any app secrets,
+# it only needs to compile the shell.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - "capacitor.config.ts"
+      - "public/**"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK platform & build-tools
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Locate APK
+        id: apk
+        run: |
+          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          cp "$APK_PATH" college-library-debug.apk
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: college-library-debug-apk
+          path: college-library-debug.apk
+
+      - name: Publish/update "latest APK" release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: android-apk-latest
+          name: College Library — latest Android APK
+          body: |
+            Auto-built from the latest `main` branch by GitHub Actions.
+            This is a debug build (self-signed, installs fine for demo/testing —
+            Android may show an "unknown source" warning on install, which is
+            normal for a debug APK).
+
+            Commit: ${{ github.sha }}
+          artifacts: college-library-debug.apk
+          allowUpdates: true
+          replacesArtifacts: true
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
