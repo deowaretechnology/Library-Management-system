@@ -61,27 +61,24 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Build debug APK
+        id: gradle_build
         working-directory: android
+        continue-on-error: true
         run: |
           chmod +x gradlew
           set -o pipefail
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
 
-      # This repo's normal log viewer (Actions UI) needs an interactive GitHub
-      # login and isn't reachable from every environment that might be
-      # debugging this workflow, so on failure also commit the tail of the
-      # build log to a throwaway branch — a plain `git fetch` is enough to
-      # read it back from anywhere with repo access.
-      - name: Save build log on failure
-        if: failure()
+      # The normal Actions log viewer needs an interactive GitHub login, which
+      # isn't available everywhere this workflow might be debugged from, so on
+      # failure also surface the real error as a ::error:: annotation — those
+      # are readable straight from the API, no login needed.
+      - name: Report Gradle failure
+        if: steps.gradle_build.outcome == 'failure'
         run: |
-          git config user.email "actions@github.com"
-          git config user.name "GitHub Actions"
-          mkdir -p .ci-logs
-          tail -n 500 /tmp/gradle-build.log > .ci-logs/gradle-build.log 2>/dev/null || echo "no gradle log captured" > .ci-logs/gradle-build.log
-          git add .ci-logs/gradle-build.log
-          git commit -m "CI debug log for ${{ github.sha }}"
-          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ci-debug-log" --force
+          TAIL=$(tail -n 60 /tmp/gradle-build.log | sed ':a;N;$!ba;s/\n/%0A/g' | head -c 6000)
+          echo "::error::Gradle build failed. Log tail:%0A$TAIL"
+          exit 1
 
       - name: Locate APK
         id: apk
