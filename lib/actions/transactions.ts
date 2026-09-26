@@ -245,17 +245,23 @@ export async function renewBook(input: { transactionId: string }) {
 
 /** Form-bound wrappers — parse FormData, call the typed action above, redirect with a friendly error on failure. */
 
-export async function issueBookFormAction(formData: FormData) {
+/**
+ * Non-redirecting version for the Quick Issue counter flow: a student can borrow up to
+ * maxBooksPerStudent books in one visit, so each scan should stay on the same student's
+ * profile (camera ready for the next book) instead of bouncing back to Step 1 via a full
+ * page redirect. The caller re-fetches the profile afterwards to show the updated count.
+ */
+export async function issueBookAction(
+  studentId: string,
+  barcode: string
+): Promise<{ success: true; dueDate: Date } | { error: string }> {
   try {
-    await issueBook({
-      studentId: String(formData.get("studentId")),
-      barcode: String(formData.get("barcode")),
-    });
+    const { dueDate } = await issueBook({ studentId, barcode });
+    revalidatePath("/admin/issue");
+    return { success: true, dueDate };
   } catch (err) {
-    redirect(`/admin/issue?error=${encodeURIComponent((err as Error).message)}`);
+    return { error: (err as Error).message };
   }
-  revalidatePath("/admin/issue");
-  redirect("/admin/issue?success=1");
 }
 
 export async function returnBookFormAction(formData: FormData) {
