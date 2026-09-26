@@ -275,6 +275,9 @@ export function IssueForm() {
                 {bookLookup.awaitingApprovalByStudent && (
                   <p className="mt-1.5 text-xs text-slate-500">{profile.name} already requested this title — approve it from the Reservations page instead of reserving again here.</p>
                 )}
+                {bookLookup.otherCopyAvailable && (
+                  <p className="mt-1.5 text-xs text-slate-500">Another copy of this title is available right now — scan a different copy of the same book to issue it directly instead of reserving.</p>
+                )}
               </div>
             </div>
           </div>

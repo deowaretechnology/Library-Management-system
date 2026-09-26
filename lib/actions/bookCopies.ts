@@ -133,6 +133,8 @@ export type BookCopyLookup = {
   canReserve: boolean;
   alreadyReservedByStudent: boolean;
   awaitingApprovalByStudent: boolean;
+  /** This exact copy is issued/unavailable, but another copy of the same title is sitting AVAILABLE — reserving is pointless, scan that copy and issue it directly instead. */
+  otherCopyAvailable: boolean;
   issuedTo?: { name: string; libraryId: string; dueDate: Date };
 };
 
@@ -164,6 +166,7 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
   let canReserve = false;
   let alreadyReservedByStudent = false;
   let awaitingApprovalByStudent = false;
+  let otherCopyAvailable = false;
 
   if (copy.status === "ISSUED") {
     const txn: any = await BorrowTransaction.findOne({ bookCopyId: copy._id, status: { $in: ["ACTIVE", "OVERDUE"] } })
@@ -172,7 +175,16 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
     if (txn?.studentId) {
       issuedTo = { name: txn.studentId.name, libraryId: txn.studentId.libraryId, dueDate: txn.dueDate };
     }
-    if (student) {
+
+    // Reserving only makes sense when NO copy of this title is free right now — if another
+    // physical copy is sitting AVAILABLE, that's what should be scanned and issued directly.
+    // Checking this here (not just inside reserveForStudentAction) stops the card from ever
+    // offering a "Reserve" button that would then fail with a confusing error.
+    const availableElsewhere = await BookCopy.countDocuments({ sanityBookId: copy.sanityBookId, status: "AVAILABLE" });
+
+    if (availableElsewhere > 0) {
+      otherCopyAvailable = true;
+    } else if (student) {
       // Includes AWAITING_APPROVAL so staff can't create a second, duplicate PENDING
       // reservation via Quick Issue while the student's own self-requested one still
       // sits unapproved — canReserve stays false either way; the flags below just
@@ -209,6 +221,7 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
     canReserve,
     alreadyReservedByStudent,
     awaitingApprovalByStudent,
+    otherCopyAvailable,
     issuedTo,
   };
 }
