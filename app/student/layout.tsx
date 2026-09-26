@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth/session";
 import { StudentSidebar } from "@/components/StudentSidebar";
 import { AssistantWidget } from "@/components/AssistantWidget";
+import { AssistantErrorBoundary } from "@/components/AssistantErrorBoundary";
 import { logout } from "@/lib/actions/auth";
 
 export default async function StudentLayout({ children }: { children: React.ReactNode }) {
@@ -20,7 +21,9 @@ export default async function StudentLayout({ children }: { children: React.Reac
         </header>
         <main>{children}</main>
       </div>
-      <AssistantWidget />
+      <AssistantErrorBoundary>
+        <AssistantWidget />
+      </AssistantErrorBoundary>
     </div>
   );
 }

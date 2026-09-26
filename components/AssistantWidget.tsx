@@ -33,14 +33,21 @@ export function AssistantWidget() {
     setMessages(nextHistory);
     setPending(true);
 
-    const result = await askLibraryAssistant(question, messages);
-
-    setPending(false);
-    if ("error" in result) {
-      setError(result.error);
-      return;
+    try {
+      const result = await askLibraryAssistant(question, messages);
+      if ("error" in result) {
+        setError(result.error);
+      } else {
+        setMessages([...nextHistory, { role: "assistant", content: result.answer }]);
+      }
+    } catch (err) {
+      // Network drop, server action threw, etc. — never let this escape
+      // unhandled and risk taking the whole page down with it.
+      console.error("Assistant widget request failed:", err);
+      setError("Couldn't reach the assistant — check your connection and try again.");
+    } finally {
+      setPending(false);
     }
-    setMessages([...nextHistory, { role: "assistant", content: result.answer }]);
   }
 
   return (

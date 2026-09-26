@@ -55,12 +55,22 @@ export function QRScanner({
       const scanner = scannerRef.current;
       scannerRef.current = null;
       if (scanner) {
-        scanner
-          .stop()
-          .then(() => scanner.clear())
-          .catch(() => {
-            // scanner was never fully started (e.g. permission denied) — nothing to stop
-          });
+        // scanner.stop() throws SYNCHRONOUSLY (not a rejected promise) when the
+        // scanner never actually got to a running state — e.g. camera access
+        // failed above and this cleanup fires when the user closes the
+        // scanner or navigates away. An uncaught throw here, inside a React
+        // effect cleanup, escapes past any .catch() on the promise chain and
+        // can crash the whole page. Guard the call itself, not just its promise.
+        try {
+          scanner
+            .stop()
+            .then(() => scanner.clear())
+            .catch(() => {
+              // stop() started but clear() (or the close) failed — nothing more to do
+            });
+        } catch {
+          // scanner was never running (e.g. permission denied) — nothing to stop
+        }
       }
     };
   }, [open, elementId, onScan]);

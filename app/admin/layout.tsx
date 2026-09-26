@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth/session";
 import { AdminSidebar } from "@/components/AdminSidebar";
 import { AdminMobileNav } from "@/components/AdminMobileNav";
 import { AssistantWidget } from "@/components/AssistantWidget";
+import { AssistantErrorBoundary } from "@/components/AssistantErrorBoundary";
 import { logout } from "@/lib/actions/auth";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -26,7 +27,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </header>
         <main>{children}</main>
       </div>
-      <AssistantWidget />
+      <AssistantErrorBoundary>
+        <AssistantWidget />
+      </AssistantErrorBoundary>
     </div>
   );
 }
