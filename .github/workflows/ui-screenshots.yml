@@ -1,0 +1,202 @@
+name: UI screenshots
+
+# Renders the whole app (next build + next start) against a throwaway MongoDB seeded with
+# realistic demo data (scripts/ui-screenshots/seed.ts; the book catalog is the real Sanity
+# dataset, read-only), screenshots every page at desktop and mobile sizes
+# (scripts/ui-screenshots/capture.mjs) and force-pushes the images plus an index.md to the
+# orphan branch `ui-screenshots`:
+#
+#   git fetch origin ui-screenshots
+#   git show origin/ui-screenshots:index.md
+#   git worktree add ../ui-shots origin/ui-screenshots   # or: git archive origin/ui-screenshots | tar -x -C <dir>
+#
+# Every failure is reported as an ::error annotation carrying the relevant log tail, so a run
+# can be diagnosed from the REST API (check-run annotations) without access to the logs.
+on:
+  push:
+    branches: ["ui-*", "!ui-screenshots"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # push the ui-screenshots branch
+
+concurrency:
+  group: ui-screenshots
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash # = bash -eo pipefail, so `cmd | tee log` fails when cmd does
+
+env:
+  PLAYWRIGHT_VERSION: "1.62.1"
+  # Also makes mongodb-memory-server's postinstall (during npm ci) fetch the version we run.
+  MONGOMS_VERSION: "7.0.14"
+  NEXT_TELEMETRY_DISABLED: "1"
+  # Runtime config for `next build` / `next start`. Throwaway values: the database only lives
+  # for this job and nothing here is a real credential.
+  SESSION_SECRET: ui-screenshots-throwaway-session-secret-0123456789
+  NEXT_PUBLIC_SANITY_PROJECT_ID: ivm8i99b
+  NEXT_PUBLIC_SANITY_DATASET: production
+  NEXT_PUBLIC_SANITY_API_VERSION: "2025-01-01"
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  # "localhost" (not 127.0.0.1): the session cookie is Secure in production, which Chromium
+  # accepts over plain http only for localhost.
+  BASE_URL: http://localhost:3000
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Prepare paths
+        run: |
+          {
+            echo "UI_LOG_DIR=$RUNNER_TEMP/ui-logs"
+            echo "UI_SHOTS_DIR=$RUNNER_TEMP/ui-shots"
+            echo "UI_SEED_IDS_FILE=$RUNNER_TEMP/ui-seed.json"
+            echo "MONGO_URI_FILE=$RUNNER_TEMP/mongo-uri.txt"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/ui-logs" "$RUNNER_TEMP/ui-shots"
+
+      - name: Install dependencies
+        id: install
+        run: npm ci --no-audit --no-fund 2>&1 | tee "$UI_LOG_DIR/npm-ci.log"
+
+      - name: Start MongoDB (in-memory replica set)
+        id: mongo
+        run: |
+          nohup node scripts/ui-screenshots/mongo.mjs "$MONGO_URI_FILE" > "$UI_LOG_DIR/mongo.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 180); do
+            [ -s "$MONGO_URI_FILE" ] && break
+            if ! kill -0 "$pid" 2>/dev/null; then echo "mongo.mjs exited before it was ready"; cat "$UI_LOG_DIR/mongo.log"; exit 1; fi
+            sleep 1
+          done
+          if [ ! -s "$MONGO_URI_FILE" ]; then echo "Timed out waiting for MongoDB"; cat "$UI_LOG_DIR/mongo.log"; exit 1; fi
+          cat "$UI_LOG_DIR/mongo.log"
+          echo "MONGODB_URI=$(cat "$MONGO_URI_FILE")" >> "$GITHUB_ENV"
+
+      - name: Seed demo data
+        id: seed
+        timeout-minutes: 5
+        run: npx tsx scripts/ui-screenshots/seed.ts 2>&1 | tee "$UI_LOG_DIR/seed.log"
+
+      # After seeding on purpose: the home page is statically rendered (ISR) at build time.
+      - name: Build the app
+        id: build
+        timeout-minutes: 12
+        run: npx next build 2>&1 | tee "$UI_LOG_DIR/build.log"
+
+      - name: Start the app
+        id: server
+        run: |
+          nohup npx next start -p 3000 > "$UI_LOG_DIR/server.log" 2>&1 &
+          pid=$!
+          code=000
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/login" || true)
+            if [ "$code" = "200" ]; then echo "App is up after ${i}s"; cat "$UI_LOG_DIR/server.log"; exit 0; fi
+            if ! kill -0 "$pid" 2>/dev/null; then echo "next start exited"; cat "$UI_LOG_DIR/server.log"; exit 1; fi
+            sleep 1
+          done
+          echo "/login still answers HTTP $code after 90s"; cat "$UI_LOG_DIR/server.log"; exit 1
+
+      - name: Install Playwright + Chromium
+        id: playwright
+        timeout-minutes: 8
+        run: |
+          # Not a project dependency on purpose: added to node_modules for this job only.
+          npm i --no-save --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION" 2>&1 | tee "$UI_LOG_DIR/playwright-install.log"
+          npx playwright install --with-deps chromium 2>&1 | tee -a "$UI_LOG_DIR/playwright-install.log"
+
+      - name: Capture screenshots
+        id: capture
+        timeout-minutes: 12
+        run: node scripts/ui-screenshots/capture.mjs 2>&1 | tee "$UI_LOG_DIR/capture.log"
+
+      # Runs even when capture exited non-zero (e.g. a login broke), so whatever was captured
+      # is still published; the job stays red in that case.
+      - name: Publish to the ui-screenshots branch
+        id: publish
+        if: ${{ !cancelled() && (steps.capture.outcome == 'success' || steps.capture.outcome == 'failure') }}
+        run: |
+          exec > >(tee "$UI_LOG_DIR/publish.log") 2>&1
+          if ! compgen -G "$UI_SHOTS_DIR/screenshots/*/*.jpg" > /dev/null || [ ! -f "$UI_SHOTS_DIR/index.md" ]; then
+            echo "Nothing to publish: no screenshots/index.md in $UI_SHOTS_DIR"; exit 1
+          fi
+          pub="$RUNNER_TEMP/publish"
+          rm -rf "$pub" && mkdir -p "$pub"
+          cp -R "$UI_SHOTS_DIR/screenshots" "$pub/screenshots"
+          cp "$UI_SHOTS_DIR/index.md" "$pub/index.md"
+          # The repo is connected to Vercel; don't let it try to deploy a branch of JPEGs.
+          echo '{"git":{"deploymentEnabled":false}}' > "$pub/vercel.json"
+
+          # Build an orphan commit from $pub with a scratch index, without touching the checkout,
+          # then push it with the credentials actions/checkout left in this repo's git config.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_INDEX_FILE="$RUNNER_TEMP/ui-screenshots.index"
+          rm -f "$GIT_INDEX_FILE"
+          git --work-tree="$pub" add --all "$pub"
+          tree=$(git write-tree)
+          count=$(find "$pub/screenshots" -name '*.jpg' | wc -l)
+          commit=$(printf 'UI screenshots of %s @ %s\n\n%s screenshots.\nSource: %s/%s/commit/%s\nRun: %s/%s/actions/runs/%s\n' \
+            "$GITHUB_REF_NAME" "${GITHUB_SHA::7}" "$count" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" | git commit-tree "$tree")
+          unset GIT_INDEX_FILE
+          git push --force origin "$commit:refs/heads/ui-screenshots"
+          echo "Published $count screenshots as $commit to ui-screenshots ($(du -sh "$pub/screenshots" | cut -f1))"
+          echo "::notice title=Published to ui-screenshots::$count screenshots, commit ${commit::7}. Fetch with: git fetch origin ui-screenshots"
+
+      - name: Report failure diagnostics
+        if: ${{ failure() }}
+        env:
+          STEPS_JSON: ${{ toJSON(steps) }}
+        run: |
+          node - <<'JS'
+          const fs = require("fs");
+          const path = require("path");
+          const steps = JSON.parse(process.env.STEPS_JSON || "{}");
+          const dir = process.env.UI_LOG_DIR || "";
+          // Which logs explain a failure of which step (the server log explains most capture problems).
+          const logsFor = {
+            install: ["npm-ci.log"],
+            mongo: ["mongo.log"],
+            seed: ["seed.log", "mongo.log"],
+            build: ["build.log"],
+            server: ["server.log", "mongo.log"],
+            playwright: ["playwright-install.log"],
+            capture: ["capture.log", "server.log"],
+            publish: ["publish.log"],
+          };
+          const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+          const prop = (s) => esc(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
+          const tail = (file) => {
+            const text = fs.readFileSync(file, "utf8").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+            return text.split("\n").slice(-70).join("\n").slice(-5500);
+          };
+          const failed = Object.entries(steps).filter(([, s]) => s.outcome === "failure").map(([id]) => id);
+          const sent = new Set();
+          for (const id of failed) {
+            for (const name of logsFor[id] || []) {
+              const file = path.join(dir, name);
+              if (sent.has(name) || !fs.existsSync(file)) continue;
+              sent.add(name);
+              console.log(`::error title=${prop(`${id} step failed: tail of ${name}`)}::${esc(tail(file) || "(empty log)")}`);
+            }
+          }
+          if (sent.size === 0) {
+            console.log(`::error title=UI screenshots failed::Failed step(s): ${failed.join(", ") || "unknown (a step without an id, e.g. checkout or setup-node)"}. No log file to attach.`);
+          }
+          JS
