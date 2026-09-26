@@ -8,10 +8,17 @@ if (!MONGODB_URI) {
 }
 
 // Node's own DNS resolver (used internally for mongodb+srv:// SRV lookups) has a known
-// bug on Windows where it ignores the OS network adapter's configured DNS servers and
+// bug on WINDOWS where it ignores the OS network adapter's configured DNS servers and
 // fails with `querySrv ECONNREFUSED`, even when the OS-level DNS is set correctly. This
 // forces Node itself to use Google DNS for this process, sidestepping that entirely.
-if (MONGODB_URI.startsWith("mongodb+srv://")) {
+//
+// LOCAL DEV ONLY: on Vercel this was actively causing the ~20s-per-login slowdown — every
+// mongodb+srv:// connect needs an SRV *and* a TXT DNS lookup, and routing both through an
+// external public resolver (8.8.8.8) from inside Vercel's serverless network is far slower
+// than the platform's own DNS, sometimes timing out and retrying. `VERCEL` is set to "1" on
+// every Vercel deployment (production, preview, and `vercel dev`), so this now only applies
+// on a plain local machine where the Windows bug above can actually occur.
+if (MONGODB_URI.startsWith("mongodb+srv://") && !process.env.VERCEL) {
   dns.setServers(["8.8.8.8", "8.8.4.4"]);
 }
 
