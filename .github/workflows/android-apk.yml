@@ -160,13 +160,18 @@ jobs:
           name: College Library — latest Android APK
           body: |
             Auto-built from the latest `main` branch by GitHub Actions.
-            Signed release build (version 1.0.${{ github.run_number }}) — installs
-            as an update over earlier builds. Android may show an "unknown source"
-            warning on install, which is normal for apps not from the Play Store.
+            Release build, version 1.0.${{ github.run_number }}. Android may show an
+            "unknown source" warning on install, which is normal for apps not from
+            the Play Store.
 
             Commit: ${{ github.sha }}
           artifacts: College-Library.apk
           allowUpdates: true
+          # Delete ALL existing assets first. GitHub treats asset names as case-insensitive,
+          # so "College-Library.apk" collided with the old "college-library.apk" and
+          # replacesArtifacts (case-sensitive match) never removed it — every build since
+          # the rename "succeeded" while the download link kept serving the old APK.
+          removeArtifacts: true
           replacesArtifacts: true
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
