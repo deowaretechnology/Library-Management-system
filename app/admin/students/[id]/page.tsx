@@ -3,6 +3,7 @@ import { getStudentDetail, updateStudentStatusAction, getClearanceStatus, confir
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StudentQRCode } from "@/components/StudentQRCode";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function AdminStudentDetailPage({
   params,
@@ -67,7 +68,7 @@ export default async function AdminStudentDetailPage({
           )}
           {student.clearanceConfirmedAt && (
             <p className="mt-1 text-xs text-emerald-700">
-              Confirmed {new Date(student.clearanceConfirmedAt).toLocaleDateString()}
+              Confirmed {formatIstDate(student.clearanceConfirmedAt)}
             </p>
           )}
         </div>
@@ -88,7 +89,7 @@ export default async function AdminStudentDetailPage({
           emptyMessage="Nothing checked out."
           columns={[
             { header: "Sanity Book ID", cell: (r: any) => r.sanityBookId },
-            { header: "Due", cell: (r: any) => new Date(r.dueDate).toLocaleDateString() },
+            { header: "Due", cell: (r: any) => formatIstDate(r.dueDate) },
             { header: "Status", cell: (r: any) => <StatusBadge status={new Date(r.dueDate) < new Date() ? "OVERDUE" : "ACTIVE"} /> },
           ]}
         />
@@ -101,8 +102,8 @@ export default async function AdminStudentDetailPage({
           emptyMessage="No history yet."
           columns={[
             { header: "Sanity Book ID", cell: (r: any) => r.sanityBookId },
-            { header: "Issued", cell: (r: any) => new Date(r.issueDate).toLocaleDateString() },
-            { header: "Returned", cell: (r: any) => (r.returnDate ? new Date(r.returnDate).toLocaleDateString() : "—") },
+            { header: "Issued", cell: (r: any) => formatIstDate(r.issueDate) },
+            { header: "Returned", cell: (r: any) => (r.returnDate ? formatIstDate(r.returnDate) : "—") },
             { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },
           ]}
         />

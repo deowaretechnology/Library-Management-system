@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth/session";
 import { getStudentDetail } from "@/lib/actions/students";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function StudentHistoryPage() {
   const session = await getSession();
@@ -16,9 +17,9 @@ export default async function StudentHistoryPage() {
         emptyMessage="No borrowing history yet."
         columns={[
           { header: "Sanity Book ID", cell: (r: any) => r.sanityBookId },
-          { header: "Issue date", cell: (r: any) => new Date(r.issueDate).toLocaleDateString() },
-          { header: "Due date", cell: (r: any) => new Date(r.dueDate).toLocaleDateString() },
-          { header: "Return date", cell: (r: any) => (r.returnDate ? new Date(r.returnDate).toLocaleDateString() : "—") },
+          { header: "Issue date", cell: (r: any) => formatIstDate(r.issueDate) },
+          { header: "Due date", cell: (r: any) => formatIstDate(r.dueDate) },
+          { header: "Return date", cell: (r: any) => (r.returnDate ? formatIstDate(r.returnDate) : "—") },
           { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },
         ]}
       />

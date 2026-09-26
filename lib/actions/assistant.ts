@@ -1,6 +1,8 @@
 "use server";
 
-import { getSession } from "@/lib/auth/session";
+import { requireSession } from "@/lib/auth/requireRole";
+import { rateLimit } from "@/lib/rate-limit";
+import { unstable_rethrow } from "next/navigation";
 import { searchCatalog } from "@/lib/actions/catalog";
 import { getDashboardStats, getOverdueTransactions, getActiveTransactions } from "@/lib/actions/dashboard";
 import { getStudentDetail } from "@/lib/actions/students";
@@ -27,8 +29,20 @@ export async function askLibraryAssistant(
   question: string,
   history: AssistantChatMessage[] = []
 ): Promise<{ answer: string } | { error: string }> {
-  const session = await getSession();
-  if (!session) return { error: "Please sign in first." };
+  let session;
+  try {
+    session = await requireSession(); // also rejects deactivated accounts / revoked sessions
+  } catch (err) {
+    unstable_rethrow(err);
+    return { error: "Please sign in first." };
+  }
+
+  // Every question costs a Gemini call plus catalog/stat queries — cap it per user so one
+  // account (or a script) can't burn the whole AI quota.
+  const limited = rateLimit(`ai:${session.userId}`, 15, 60 * 1000);
+  if (!limited.allowed) {
+    return { error: `You're asking very fast — try again in ${Math.ceil(limited.retryAfterMs / 1000)} seconds.` };
+  }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -38,7 +52,7 @@ export async function askLibraryAssistant(
     };
   }
 
-  const trimmed = question.trim();
+  const trimmed = String(question ?? "").trim();
   if (!trimmed) return { error: "Ask something first." };
   if (trimmed.length > 500) return { error: "That's a bit long — try a shorter question." };
 
@@ -93,7 +107,7 @@ Pending fines: ₹${pendingFineTotal}`;
   } else {
     const [stats, overdue, active] = await Promise.all([
       getDashboardStats(),
-      getOverdueTransactions(),
+      getOverdueTransactions(200),
       getActiveTransactions(),
     ]);
 
@@ -136,8 +150,15 @@ ${session.role === "STUDENT" ? "THIS STUDENT'S OWN DATA:" : "LIBRARY DATA:"}
 ${personalContext}`;
 
   try {
+    // History comes from the client, so it's untrusted: cap turns and length, and only keep
+    // well-formed entries (arbitrary-size fake turns were accepted before).
+    const safeHistory = (Array.isArray(history) ? history : [])
+      .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .slice(-6)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 1500) }));
+
     const contents = [
-      ...history.slice(-6).map((m) => ({
+      ...safeHistory.map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }],
       })),
@@ -162,6 +183,8 @@ ${personalContext}`;
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: requestBody,
+        // Never let a hung upstream call hold the serverless function open until it's killed.
+        signal: AbortSignal.timeout(15000),
       });
       if (res.ok) break;
       if (res.status !== 503 && res.status !== 429) break;

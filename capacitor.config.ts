@@ -14,9 +14,13 @@ const config: CapacitorConfig = {
     url: LIVE_APP_URL,
     androidScheme: "https",
     cleartext: false,
+    // No errorPath on purpose: Capacitor shows it for ANY main-frame HTTP error (403, 404,
+    // 500), not only when offline — every server error would have said "You're offline".
   },
   android: {
     allowMixedContent: false,
+    // Never expose the WebView (and its session cookie) to chrome://inspect.
+    webContentsDebuggingEnabled: false,
   },
 };
 

@@ -16,15 +16,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const event = JSON.parse(rawBody);
+  let event: any;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: "Bad payload" }, { status: 400 });
+  }
 
   if (event.event === "payment_link.paid") {
     const paymentLink = event.payload?.payment_link?.entity;
     const payment = event.payload?.payment?.entity;
-    const fineId = paymentLink?.reference_id;
+    const reference: string | undefined = paymentLink?.reference_id;
+    // New links use "<fineId>_<suffix>" (unique per attempt); old links used the bare fineId.
+    const fineId = reference ? String(reference).split("_")[0] : undefined;
+    const paidRupees = typeof payment?.amount === "number" ? payment.amount / 100 : 0;
 
     if (fineId) {
       await connectToDatabase();
+      // Status filter makes webhook retries/replays idempotent — a fine is marked paid once.
       await Fine.updateOne(
         { fineId, status: { $in: ["PENDING", "PARTIALLY_PAID"] } },
         {
@@ -34,6 +43,7 @@ export async function POST(request: NextRequest) {
             paymentMethod: "razorpay",
             paymentReference: payment?.id ?? paymentLink?.id,
           },
+          $inc: { amountPaid: paidRupees },
         }
       );
     }

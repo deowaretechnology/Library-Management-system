@@ -5,22 +5,28 @@ import { sanityReadClient } from "@/lib/sanity/client";
 import Student from "@/models/Student";
 import BookCopy from "@/models/BookCopy";
 import LibraryVisit from "@/models/LibraryVisit";
+import { startOfIstDay } from "@/lib/domain/dates";
 
+/** Public landing-page numbers. Never throws — a DB hiccup shows zeros, not a crashed homepage. */
 export async function getLibraryStats() {
-  await connectToDatabase();
-
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-
-  const [titleCount, categoryCount, studentCount, copyCount, visitsToday] = await Promise.all([
+  const [titleCount, categoryCount] = await Promise.all([
     sanityReadClient.fetch<number>(`count(*[_type == "book"])`).catch(() => 0),
     sanityReadClient.fetch<number>(`count(*[_type == "category"])`).catch(() => 0),
-    Student.countDocuments({}),
-    BookCopy.countDocuments({}),
-    LibraryVisit.countDocuments({ entryDate: { $gte: startOfToday } }),
   ]);
 
-  return { titleCount, categoryCount, studentCount, copyCount, visitsToday };
+  try {
+    await connectToDatabase();
+    const [studentCount, copyCount, visitsToday] = await Promise.all([
+      // O(1) metadata counts — this runs for anonymous visitors.
+      Student.estimatedDocumentCount(),
+      BookCopy.estimatedDocumentCount(),
+      LibraryVisit.countDocuments({ entryDate: { $gte: startOfIstDay() } }),
+    ]);
+    return { titleCount, categoryCount, studentCount, copyCount, visitsToday };
+  } catch (err) {
+    console.error("[public] library stats unavailable:", err);
+    return { titleCount, categoryCount, studentCount: 0, copyCount: 0, visitsToday: 0 };
+  }
 }
 
 export type FeaturedBook = {
@@ -32,6 +38,7 @@ export type FeaturedBook = {
 };
 
 export async function getFeaturedBooks(limit = 6): Promise<FeaturedBook[]> {
+  limit = Math.min(24, Math.max(1, Math.floor(Number(limit) || 6)));
   const books = await sanityReadClient.fetch<FeaturedBook[]>(
     `*[_type == "book"] | order(title asc) [0...$limit]{
       _id, title, "authors": authors[]->name, "category": category->name,

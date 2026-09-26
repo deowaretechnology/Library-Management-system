@@ -51,22 +51,43 @@ async function main() {
     { upsert: true }
   );
 
-  const adminPassword = await hashPassword("Admin@123");
+  // $setOnInsert: the demo passwords are only applied when the account is FIRST created.
+  // Previously every re-run of the seed silently reset the live admin/librarian passwords
+  // back to these publicly known values. Override them with SEED_ADMIN_PASSWORD /
+  // SEED_LIBRARIAN_PASSWORD for any real deployment.
+  const adminPlain = process.env.SEED_ADMIN_PASSWORD || "Admin@123";
+  const librarianPlain = process.env.SEED_LIBRARIAN_PASSWORD || "Librarian@123";
+
   const admin = await User.findOneAndUpdate(
     { email: "admin@library.local" },
-    { role: "SUPER_ADMIN", email: "admin@library.local", passwordHash: adminPassword, name: "Super Admin", status: "ACTIVE" },
+    {
+      $setOnInsert: {
+        role: "SUPER_ADMIN",
+        email: "admin@library.local",
+        passwordHash: await hashPassword(adminPlain),
+        name: "Super Admin",
+        status: "ACTIVE",
+      },
+    },
     { upsert: true, new: true }
   );
 
-  const librarianPassword = await hashPassword("Librarian@123");
   await User.findOneAndUpdate(
     { email: "librarian@library.local" },
-    { role: "LIBRARIAN", email: "librarian@library.local", passwordHash: librarianPassword, name: "Head Librarian", status: "ACTIVE" },
+    {
+      $setOnInsert: {
+        role: "LIBRARIAN",
+        email: "librarian@library.local",
+        passwordHash: await hashPassword(librarianPlain),
+        name: "Head Librarian",
+        status: "ACTIVE",
+      },
+    },
     { upsert: true, new: true }
   );
 
-  console.log("Admin login: admin@library.local / Admin@123");
-  console.log("Librarian login: librarian@library.local / Librarian@123");
+  console.log("Admin login: admin@library.local (password unchanged if the account already existed)");
+  console.log("Librarian login: librarian@library.local (password unchanged if the account already existed)");
 
   for (let i = 1; i <= 10; i++) {
     const studentId = `STU-2026-${1000 + i}`;

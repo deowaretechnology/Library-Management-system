@@ -5,12 +5,16 @@ import { AssistantWidget } from "@/components/AssistantWidget";
 import { AssistantErrorBoundary } from "@/components/AssistantErrorBoundary";
 import { logout } from "@/lib/actions/auth";
 import { countReservationsAwaitingApproval } from "@/lib/actions/reservations";
+import { unstable_rethrow } from "next/navigation";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession(); // middleware already guarantees an admin-role session here
   // Powers the "Reservations" nav badge — the stand-in for a staff notification system,
   // since student self-reservations now need explicit approval before they're valid.
-  const pendingReservationCount = await countReservationsAwaitingApproval().catch(() => 0);
+  const pendingReservationCount = await countReservationsAwaitingApproval().catch((err) => {
+    unstable_rethrow(err); // a revoked session must still redirect to sign-in
+    return 0;
+  });
 
   return (
     <div className="flex min-h-screen">

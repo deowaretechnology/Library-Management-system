@@ -18,7 +18,10 @@ import { getSettings } from "@/lib/actions/settings";
 import { SiteHeader } from "@/components/marketing/SiteHeader";
 import { SiteFooter } from "@/components/marketing/SiteFooter";
 
-export const dynamic = "force-dynamic";
+// The homepage reads no cookies — it's the same for every visitor. Rendering it at most once
+// per 5 minutes (ISR) instead of on every hit removes ~7 DB/Sanity queries per anonymous
+// visit, which is exactly the page that gets the most traffic.
+export const revalidate = 300;
 
 const SERVICES = [
   { icon: BookOpen, label: "Book Search", desc: "Find books by title, author, subject or category.", tint: "bg-emerald-50 text-emerald-600", ring: "bg-emerald-600" },
@@ -49,7 +52,7 @@ export default async function HomePage() {
   const [stats, books, settings] = await Promise.all([
     getLibraryStats(),
     getFeaturedBooks(6),
-    getSettings(),
+    getSettings().catch(() => ({ borrowingDurationDays: 7, maxBooksPerStudent: 3, finePerDay: 5, maxRenewals: 2 }) as any),
   ]);
 
   return (

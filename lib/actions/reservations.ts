@@ -1,50 +1,61 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { connectToDatabase } from "@/lib/db/mongodb";
 import { requireRole, assertOwnStudentRecord } from "@/lib/auth/requireRole";
 import { notify } from "@/lib/notifications/send";
+import { makeId } from "@/lib/domain/ids";
+import { offerCopyToQueue } from "@/lib/domain/reservationQueue";
 import Reservation from "@/models/Reservation";
 import Student from "@/models/Student";
 import BookCopy from "@/models/BookCopy";
 
+const STAFF_ROLES = ["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"] as const;
+const OPEN_STATUSES = ["AWAITING_APPROVAL", "PENDING", "READY"];
+const ALL_STATUSES = ["AWAITING_APPROVAL", "PENDING", "READY", "FULFILLED", "CANCELLED", "EXPIRED"];
+
+function revalidateReservationPages() {
+  revalidatePath("/admin/reservations");
+  revalidatePath("/student/reservations");
+  revalidatePath("/admin", "layout"); // sidebar "awaiting approval" badge
+}
+
 export async function reserveBookAction(formData: FormData) {
   const session = await requireRole(["STUDENT", "SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
-  const studentIdInput = String(formData.get("studentId"));
-  const sanityBookId = String(formData.get("sanityBookId"));
+  const studentIdInput = String(formData.get("studentId") ?? "");
+  const sanityBookId = String(formData.get("sanityBookId") ?? "");
+  if (!studentIdInput || !sanityBookId) redirect(`/student/books?error=${encodeURIComponent("Missing book or student.")}`);
 
   if (session.role === "STUDENT") assertOwnStudentRecord(session, studentIdInput);
 
   await connectToDatabase();
-  const student = await Student.findOne({ studentId: studentIdInput });
+  const student = await Student.findOne({ studentId: studentIdInput }).lean<any>();
   if (!student) redirect(`/student/books?error=${encodeURIComponent("Student not found.")}`);
+  if (student.status !== "ACTIVE") {
+    redirect(`/student/books?error=${encodeURIComponent(`Your library account is ${student.status.toLowerCase()} — contact the library desk.`)}`);
+  }
 
   const availableCopies = await BookCopy.countDocuments({ sanityBookId, status: "AVAILABLE" });
   if (availableCopies > 0) {
-    redirect(`/student/books?error=${encodeURIComponent("Copies are available right now — use Quick Issue instead of reserving.")}`);
+    redirect(`/student/books?error=${encodeURIComponent("Copies are available right now — ask at the counter to issue one.")}`);
   }
 
-  const existing = await Reservation.findOne({
-    studentId: student!._id,
-    sanityBookId,
-    status: { $in: ["AWAITING_APPROVAL", "PENDING", "READY"] },
-  });
+  const existing = await Reservation.exists({ studentId: student._id, sanityBookId, status: { $in: OPEN_STATUSES } });
   if (existing) redirect(`/student/books?error=${encodeURIComponent("You already have a reservation for this title.")}`);
 
-  // Student-initiated reservations start as AWAITING_APPROVAL — they don't hold a spot
-  // in the queue (a due-back copy can't be offered to them) until a librarian approves
-  // the request. Staff-created reservations (reserveForStudentAction, below) skip this —
-  // a staff member creating it IS the approval.
+  // Student-initiated reservations start as AWAITING_APPROVAL — they don't hold a spot in
+  // the queue (a returned copy can't be offered to them) until a librarian approves the
+  // request. Staff-created reservations (reserveForStudentAction, below) skip this — a
+  // staff member creating it IS the approval.
   await Reservation.create({
-    reservationId: `RES-${Date.now()}`,
-    studentId: student!._id,
+    reservationId: makeId("RES"),
+    studentId: student._id,
     sanityBookId,
     status: "AWAITING_APPROVAL",
   });
 
-  revalidatePath("/admin/reservations");
-  revalidatePath("/student/reservations");
+  revalidateReservationPages();
   redirect("/student/reservations?success=1");
 }
 
@@ -59,22 +70,21 @@ export async function reserveForStudentAction(
   sanityBookId: string
 ): Promise<{ success: true } | { error: string }> {
   try {
-    await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+    await requireRole([...STAFF_ROLES]);
     await connectToDatabase();
 
-    const student = await Student.findOne({ studentId });
+    const student = await Student.findOne({ studentId: String(studentId) }).lean<any>();
     if (!student) return { error: "Student not found." };
+    if (student.status !== "ACTIVE") return { error: `Student account is ${student.status.toLowerCase()}.` };
 
-    const availableCopies = await BookCopy.countDocuments({ sanityBookId, status: "AVAILABLE" });
-    if (availableCopies > 0) {
-      return { error: "A copy is available right now — issue it directly instead of reserving." };
-    }
+    const availableCopies = await BookCopy.countDocuments({ sanityBookId: String(sanityBookId), status: "AVAILABLE" });
+    if (availableCopies > 0) return { error: "A copy is available right now — issue it directly instead of reserving." };
 
     const existing = await Reservation.findOne({
       studentId: student._id,
-      sanityBookId,
-      status: { $in: ["AWAITING_APPROVAL", "PENDING", "READY"] },
-    });
+      sanityBookId: String(sanityBookId),
+      status: { $in: OPEN_STATUSES },
+    }).lean<any>();
     if (existing) {
       return {
         error:
@@ -85,112 +95,137 @@ export async function reserveForStudentAction(
     }
 
     await Reservation.create({
-      reservationId: `RES-${Date.now()}`,
+      reservationId: makeId("RES"),
       studentId: student._id,
-      sanityBookId,
+      sanityBookId: String(sanityBookId),
       status: "PENDING",
     });
 
-    revalidatePath("/admin/reservations");
-    revalidatePath("/student/reservations");
+    revalidateReservationPages();
     return { success: true };
   } catch (err) {
+    unstable_rethrow(err);
     return { error: (err as Error).message };
   }
 }
 
 /**
- * Turns a student-requested AWAITING_APPROVAL reservation into a real, queued PENDING
- * one — from here on it behaves exactly like a staff-created reservation (eligible to
- * be offered the next returned copy).
+ * Turns a student-requested AWAITING_APPROVAL reservation into a real, queued one. If a
+ * copy happens to be on the shelf right now, it's held for them immediately (READY) —
+ * previously the approved student just sat in the queue while copies stayed AVAILABLE.
  */
 export async function approveReservationAction(formData: FormData) {
-  const session = await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
-  const reservationId = String(formData.get("reservationId"));
+  const session = await requireRole([...STAFF_ROLES]);
+  const reservationId = String(formData.get("reservationId") ?? "");
 
   await connectToDatabase();
-  const reservation = await Reservation.findOne({ reservationId });
-  if (!reservation || reservation.status !== "AWAITING_APPROVAL") {
-    revalidatePath("/admin/reservations");
+  // Atomic status transition — a double click can't approve twice or approve a cancelled one.
+  const reservation = await Reservation.findOneAndUpdate(
+    { reservationId, status: "AWAITING_APPROVAL" },
+    { $set: { status: "PENDING", approvedAt: new Date(), approvedBy: session.userId } },
+    { new: true }
+  );
+  if (!reservation) {
+    revalidateReservationPages();
     return;
   }
 
-  reservation.status = "PENDING";
-  reservation.approvedAt = new Date();
-  reservation.approvedBy = session.userId as any;
-  await reservation.save();
+  const freeCopy = await BookCopy.findOneAndUpdate(
+    { sanityBookId: reservation.sanityBookId, status: "AVAILABLE" },
+    { $set: { status: "RESERVED" } },
+    { new: true }
+  );
 
-  await notify(reservation.studentId.toString(), "RESERVATION_APPROVED", "Your book reservation was approved and is now in the queue.");
+  if (freeCopy) {
+    const held = await Reservation.findOneAndUpdate(
+      { _id: reservation._id, status: "PENDING" },
+      { $set: { status: "READY", bookCopyId: freeCopy._id, readyAt: new Date() } },
+      { new: true }
+    );
+    if (held) {
+      await notify(reservation.studentId.toString(), "RESERVATION_READY", "Your reservation was approved and the book is ready for pickup at the counter.");
+    } else {
+      // Reservation changed underneath us — give the copy to whoever is next instead.
+      await offerCopyToQueue(freeCopy._id, freeCopy.sanityBookId);
+    }
+  } else {
+    await notify(reservation.studentId.toString(), "RESERVATION_APPROVED", "Your book reservation was approved and is now in the queue.");
+  }
 
-  revalidatePath("/admin/reservations");
-  revalidatePath("/student/reservations");
+  revalidateReservationPages();
 }
 
-/** Declines a student's AWAITING_APPROVAL request — same effect as cancelling, but tells the student it was rejected rather than that they cancelled it themselves. */
+/** Declines a student's AWAITING_APPROVAL request and tells them it was rejected (not that they cancelled it). */
 export async function rejectReservationAction(formData: FormData) {
-  const session = await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
-  void session;
-  const reservationId = String(formData.get("reservationId"));
+  await requireRole([...STAFF_ROLES]);
+  const reservationId = String(formData.get("reservationId") ?? "");
 
   await connectToDatabase();
-  const reservation = await Reservation.findOne({ reservationId });
-  if (!reservation || reservation.status !== "AWAITING_APPROVAL") {
-    revalidatePath("/admin/reservations");
-    return;
+  const reservation = await Reservation.findOneAndUpdate(
+    { reservationId, status: "AWAITING_APPROVAL" },
+    { $set: { status: "CANCELLED", cancelledAt: new Date() } },
+    { new: true }
+  );
+  if (reservation) {
+    await notify(
+      reservation.studentId.toString(),
+      "RESERVATION_REJECTED",
+      "Your book reservation request wasn't approved. Contact the library desk for details."
+    );
   }
 
-  reservation.status = "CANCELLED";
-  reservation.cancelledAt = new Date();
-  await reservation.save();
-
-  await notify(reservation.studentId.toString(), "RESERVATION_REJECTED", "Your book reservation request wasn't approved. Contact the library desk for details.");
-
-  revalidatePath("/admin/reservations");
-  revalidatePath("/student/reservations");
+  revalidateReservationPages();
 }
 
 /** Powers the sidebar badge that surfaces new student reservation requests to staff. */
 export async function countReservationsAwaitingApproval(): Promise<number> {
-  await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  await requireRole([...STAFF_ROLES]);
   await connectToDatabase();
   return Reservation.countDocuments({ status: "AWAITING_APPROVAL" });
 }
 
 export async function cancelReservationAction(formData: FormData) {
-  const session = await requireRole(["STUDENT", "SUPER_ADMIN", "LIBRARIAN"]);
-  const reservationId = String(formData.get("reservationId"));
+  // LIBRARY_STAFF was missing here — they could create/approve/reject but got an error page on Cancel.
+  const session = await requireRole(["STUDENT", ...STAFF_ROLES]);
+  const reservationId = String(formData.get("reservationId") ?? "");
 
   await connectToDatabase();
-  const reservation = await Reservation.findOne({ reservationId });
+  const reservation = await Reservation.findOne({ reservationId }).lean<any>();
   if (!reservation) return;
 
   if (session.role === "STUDENT") {
-    const student = await Student.findById(reservation.studentId);
+    const student = await Student.findById(reservation.studentId).select("studentId").lean<any>();
     if (!student || student.studentId !== session.studentId) {
       throw new Error("You can only cancel your own reservations.");
     }
   }
 
-  reservation.status = "CANCELLED";
-  reservation.cancelledAt = new Date();
-  await reservation.save();
+  // Only open reservations can be cancelled — FULFILLED/EXPIRED history can't be rewritten.
+  const cancelled = await Reservation.findOneAndUpdate(
+    { _id: reservation._id, status: { $in: OPEN_STATUSES } },
+    { $set: { status: "CANCELLED", cancelledAt: new Date() } },
+    { new: false } // return the pre-update doc so we know whether it was holding a copy
+  );
 
-  // If a copy was already being held for this reservation, free it back up.
-  if (reservation.bookCopyId) {
-    await BookCopy.updateOne({ _id: reservation.bookCopyId, status: "RESERVED" }, { $set: { status: "AVAILABLE" } });
+  // A copy held for this reservation goes to the NEXT student in the queue — it used to go
+  // straight back to the shelf, letting a walk-in jump ahead of everyone waiting.
+  if (cancelled?.status === "READY" && cancelled.bookCopyId) {
+    const next = await offerCopyToQueue(cancelled.bookCopyId, cancelled.sanityBookId);
+    if (next) await notify(next.studentId, "RESERVATION_READY", "Your reserved book is ready for pickup at the counter.");
   }
 
-  revalidatePath("/admin/reservations");
-  revalidatePath("/student/reservations");
+  revalidateReservationPages();
 }
 
 export async function listReservations(status?: string) {
-  await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  await requireRole([...STAFF_ROLES]);
   await connectToDatabase();
   const filter: Record<string, unknown> = {};
-  if (status) filter.status = status;
+  // Only accept a known status string — never pass a raw client value into the query.
+  if (status && ALL_STATUSES.includes(String(status))) filter.status = String(status);
   return Reservation.find(filter)
     .sort({ requestedAt: -1 })
+    .limit(300)
     .populate("studentId", "name studentId")
     .lean();
 }
@@ -200,7 +235,7 @@ export async function listOwnReservations(studentId: string) {
   assertOwnStudentRecord(session, studentId);
 
   await connectToDatabase();
-  const student = await Student.findOne({ studentId });
+  const student = await Student.findOne({ studentId }).select("_id").lean<any>();
   if (!student) return [];
-  return Reservation.find({ studentId: student._id }).sort({ requestedAt: -1 }).lean();
+  return Reservation.find({ studentId: student._id }).sort({ requestedAt: -1 }).limit(100).lean();
 }

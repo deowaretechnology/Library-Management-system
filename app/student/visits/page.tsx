@@ -3,6 +3,7 @@ import { getStudentDetail } from "@/lib/actions/students";
 import { listVisitsForStudent } from "@/lib/actions/visits";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function StudentVisitsPage() {
   const session = await getSession();
@@ -18,7 +19,7 @@ export default async function StudentVisitsPage() {
         rows={visits as any[]}
         emptyMessage="No library visits recorded yet."
         columns={[
-          { header: "Date", cell: (r: any) => new Date(r.entryDate).toLocaleDateString() },
+          { header: "Date", cell: (r: any) => formatIstDate(r.entryDate) },
           { header: "Entry", cell: (r: any) => r.entryTime },
           { header: "Exit", cell: (r: any) => r.exitTime ?? "—" },
           { header: "Duration (min)", cell: (r: any) => r.durationMinutes ?? "—" },

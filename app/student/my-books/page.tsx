@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth/session";
 import { getStudentDetail } from "@/lib/actions/students";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function StudentMyBooksPage() {
   const session = await getSession();
@@ -16,8 +17,8 @@ export default async function StudentMyBooksPage() {
         emptyMessage="You don't have any books checked out."
         columns={[
           { header: "Sanity Book ID", cell: (r: any) => r.sanityBookId },
-          { header: "Issue date", cell: (r: any) => new Date(r.issueDate).toLocaleDateString() },
-          { header: "Due date", cell: (r: any) => new Date(r.dueDate).toLocaleDateString() },
+          { header: "Issue date", cell: (r: any) => formatIstDate(r.issueDate) },
+          { header: "Due date", cell: (r: any) => formatIstDate(r.dueDate) },
           {
             header: "Status",
             cell: (r: any) => (

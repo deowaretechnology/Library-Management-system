@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_rethrow } from "next/navigation";
 import { requireRole } from "@/lib/auth/requireRole";
 import { toCSV } from "@/lib/csv";
 import { toPDF } from "@/lib/pdf";
@@ -15,6 +16,7 @@ import {
 } from "@/lib/actions/reports";
 import { getOverdueTransactions } from "@/lib/actions/dashboard";
 import { listFines } from "@/lib/actions/fines";
+import { formatIstDate } from "@/lib/domain/dates";
 
 type ReportDef = { title: string; rows: any[]; columns: { key: string; header: string }[] };
 
@@ -55,7 +57,7 @@ const REPORTS: Record<string, () => Promise<ReportDef>> = {
     rows: (await getOverdueTransactions()).map((t: any) => ({
       student: t.studentId?.name,
       studentId: t.studentId?.studentId,
-      dueDate: new Date(t.dueDate).toLocaleDateString(),
+      dueDate: formatIstDate(t.dueDate),
     })),
     columns: [
       { key: "student", header: "Student" },
@@ -94,8 +96,8 @@ const REPORTS: Record<string, () => Promise<ReportDef>> = {
     rows: (await getIssueReport()).map((t: any) => ({
       student: t.studentId?.name,
       studentId: t.studentId?.studentId,
-      issueDate: new Date(t.issueDate).toLocaleDateString(),
-      dueDate: new Date(t.dueDate).toLocaleDateString(),
+      issueDate: formatIstDate(t.issueDate),
+      dueDate: formatIstDate(t.dueDate),
       status: t.status,
     })),
     columns: [
@@ -111,7 +113,7 @@ const REPORTS: Record<string, () => Promise<ReportDef>> = {
     rows: (await getReturnReport()).map((t: any) => ({
       student: t.studentId?.name,
       studentId: t.studentId?.studentId,
-      returnDate: t.returnDate ? new Date(t.returnDate).toLocaleDateString() : "",
+      returnDate: t.returnDate ? formatIstDate(t.returnDate) : "",
     })),
     columns: [
       { key: "student", header: "Student" },
@@ -139,7 +141,7 @@ const REPORTS: Record<string, () => Promise<ReportDef>> = {
     rows: (await getEntryExitReport()).map((v: any) => ({
       student: v.studentId?.name,
       studentId: v.studentId?.studentId,
-      entry: `${new Date(v.entryDate).toLocaleDateString()} ${v.entryTime}`,
+      entry: `${formatIstDate(v.entryDate)} ${v.entryTime}`,
       exit: v.exitTime ?? "",
       status: v.status,
     })),
@@ -171,7 +173,12 @@ const REPORTS: Record<string, () => Promise<ReportDef>> = {
 };
 
 export async function GET(request: NextRequest) {
-  await requireRole(["SUPER_ADMIN", "LIBRARIAN"]);
+  try {
+    await requireRole(["SUPER_ADMIN", "LIBRARIAN"]);
+  } catch (err) {
+    unstable_rethrow(err);
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const type = request.nextUrl.searchParams.get("type") ?? "";
   const format = request.nextUrl.searchParams.get("format") ?? "csv";
@@ -192,7 +199,8 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const csv = toCSV(rows, columns);
+  // Leading BOM so Excel opens it as UTF-8 (₹ and non-ASCII names otherwise show garbled).
+  const csv = "\uFEFF" + toCSV(rows, columns);
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

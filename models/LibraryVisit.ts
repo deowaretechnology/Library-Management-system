@@ -34,5 +34,13 @@ const LibraryVisitSchema = new Schema<ILibraryVisit>(
 
 LibraryVisitSchema.index({ studentId: 1, status: 1 });
 LibraryVisitSchema.index({ entryDate: 1 });
+// A student can be INSIDE at most once — a double gate-scan can no longer create two open visits.
+LibraryVisitSchema.index(
+  { studentId: 1 },
+  { unique: true, partialFilterExpression: { status: "INSIDE" }, name: "one_open_visit_per_student" }
+);
+LibraryVisitSchema.index({ status: 1, entryDate: -1 });
+LibraryVisitSchema.index({ createdAt: -1 });
+LibraryVisitSchema.index({ studentId: 1, entryDate: -1 });
 
 export default models.LibraryVisit || model<ILibraryVisit>("LibraryVisit", LibraryVisitSchema);

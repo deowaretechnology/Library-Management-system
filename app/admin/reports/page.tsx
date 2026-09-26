@@ -16,6 +16,9 @@ import { runDueSoonSweepAction } from "@/lib/actions/notifications";
 import { DataTable } from "@/components/DataTable";
 import { TrendChart } from "@/components/TrendChart";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatIstDate } from "@/lib/domain/dates";
+
+const PREVIEW_ROWS = 100;
 
 function ExportLinks({ type }: { type: string }) {
   return (
@@ -29,7 +32,10 @@ function ExportLinks({ type }: { type: string }) {
 function SectionHeader({ title, type, count }: { title: string; type: string; count?: number }) {
   return (
     <div className="mb-2 flex items-center justify-between">
-      <h2 className="text-sm font-semibold text-slate-700">{title}{count !== undefined && ` (${count})`}</h2>
+      <h2 className="text-sm font-semibold text-slate-700">
+        {title}
+        {count !== undefined && (count >= PREVIEW_ROWS ? ` (showing ${PREVIEW_ROWS} — export for all)` : ` (${count})`)}
+      </h2>
       <ExportLinks type={type} />
     </div>
   );
@@ -48,13 +54,15 @@ export default async function AdminReportsPage({
     getMostBorrowedBooks(),
     getDepartmentWiseBorrowing(),
     getFineCollectionSummary(),
-    getStudentReport(),
+    // On-page previews are capped — the full data is in each section's CSV/PDF export.
+    // (Rendering every student + 30 days of visits made this page several MB and slow.)
+    getStudentReport(PREVIEW_ROWS),
     getInventoryReport(),
-    getClearanceReport(),
-    getIssueReport(),
-    getReturnReport(),
+    getClearanceReport(PREVIEW_ROWS),
+    getIssueReport(30, PREVIEW_ROWS),
+    getReturnReport(30, PREVIEW_ROWS),
     getLostDamagedReport(),
-    getEntryExitReport(),
+    getEntryExitReport(30, PREVIEW_ROWS),
     getMostActiveStudents(),
     getAnnualStats(),
   ]);
@@ -123,8 +131,8 @@ export default async function AdminReportsPage({
           emptyMessage="No issues in the last 30 days."
           columns={[
             { header: "Student", cell: (r: any) => r.student },
-            { header: "Issued", cell: (r: any) => new Date(r.issueDate).toLocaleDateString() },
-            { header: "Due", cell: (r: any) => new Date(r.dueDate).toLocaleDateString() },
+            { header: "Issued", cell: (r: any) => formatIstDate(r.issueDate) },
+            { header: "Due", cell: (r: any) => formatIstDate(r.dueDate) },
             { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },
           ]}
         />
@@ -138,7 +146,7 @@ export default async function AdminReportsPage({
           emptyMessage="No returns in the last 30 days."
           columns={[
             { header: "Student", cell: (r: any) => r.student },
-            { header: "Returned", cell: (r: any) => r.returnDate ? new Date(r.returnDate).toLocaleDateString() : "—" },
+            { header: "Returned", cell: (r: any) => r.returnDate ? formatIstDate(r.returnDate) : "—" },
           ]}
         />
       </section>
@@ -165,7 +173,7 @@ export default async function AdminReportsPage({
           emptyMessage="No visits in the last 30 days."
           columns={[
             { header: "Student", cell: (r: any) => r.student },
-            { header: "Entry", cell: (r: any) => `${new Date(r.entryDate).toLocaleDateString()} ${r.entryTime}` },
+            { header: "Entry", cell: (r: any) => `${formatIstDate(r.entryDate)} ${r.entryTime}` },
             { header: "Exit", cell: (r: any) => r.exitTime ?? "—" },
             { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },
           ]}
@@ -232,7 +240,8 @@ export default async function AdminReportsPage({
           columns={[
             { header: "Status", cell: (r: any) => r._id },
             { header: "Count", cell: (r: any) => r.count },
-            { header: "Total (₹)", cell: (r: any) => r.total },
+            { header: "Outstanding / final (₹)", cell: (r: any) => r.total },
+            { header: "Collected (₹)", cell: (r: any) => r.collected ?? 0 },
           ]}
         />
       </section>

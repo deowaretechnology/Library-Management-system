@@ -12,6 +12,8 @@ export interface ILibrarySettings {
   allowRenewal: boolean;
   maxRenewals: number;
   maxFineAmount: number;
+  /** How long a READY reservation holds a copy before it expires and moves to the next student. */
+  reservationHoldDays: number;
   updatedAt: Date;
 }
 
@@ -28,6 +30,7 @@ const LibrarySettingsSchema = new Schema<ILibrarySettings>(
     allowRenewal: { type: Boolean, default: true },
     maxRenewals: { type: Number, default: 2 },
     maxFineAmount: { type: Number, default: 500 },
+    reservationHoldDays: { type: Number, default: 3 },
   },
   { timestamps: { createdAt: false, updatedAt: true } }
 );

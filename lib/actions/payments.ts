@@ -9,8 +9,8 @@ import Student from "@/models/Student";
 
 export async function initiateFinePaymentAction(formData: FormData) {
   const session = await requireRole(["STUDENT"]);
-  const fineId = String(formData.get("fineId"));
-  const studentIdInput = String(formData.get("studentId"));
+  const fineId = String(formData.get("fineId") ?? "");
+  const studentIdInput = String(formData.get("studentId") ?? "");
   assertOwnStudentRecord(session, studentIdInput);
 
   if (!isPaymentGatewayConfigured()) {
@@ -30,6 +30,15 @@ export async function initiateFinePaymentAction(formData: FormData) {
     redirect(`/student/fines?error=${encodeURIComponent("This fine is already settled.")}`);
   }
 
+  // Reuse the existing link while it's still for the current outstanding amount —
+  // Razorpay rejects a second link with the same reference_id, so every retry after an
+  // abandoned first attempt used to fail.
+  if (fine!.paymentLinkUrl && fine!.paymentLinkAmount === fine!.amount) {
+    redirect(fine!.paymentLinkUrl);
+  }
+
+  // fineIds never contain "_", so the webhook can recover the fineId with split("_")[0].
+  const referenceId = `${fine!.fineId}_${Date.now().toString(36)}`;
   let link: { id: string; shortUrl: string };
   try {
     link = await createPaymentLink({
@@ -38,16 +47,19 @@ export async function initiateFinePaymentAction(formData: FormData) {
       studentName: student!.name,
       studentEmail: student!.email,
       studentPhone: student!.phone,
-      referenceId: fine!.fineId,
+      referenceId,
       callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL}/student/fines`,
     });
   } catch (err) {
-    redirect(`/student/fines?error=${encodeURIComponent((err as Error).message)}`);
+    // Log the gateway's details server-side; never show raw Razorpay responses to students.
+    console.error("[payments] payment link creation failed:", err);
+    redirect(`/student/fines?error=${encodeURIComponent("Couldn't start the online payment right now — please try again, or pay at the library counter.")}`);
   }
 
-  fine!.paymentLinkId = link.id;
-  fine!.paymentLinkUrl = link.shortUrl;
-  await fine!.save();
+  await Fine.updateOne(
+    { _id: fine!._id },
+    { $set: { paymentLinkId: link.id, paymentLinkUrl: link.shortUrl, paymentLinkRef: referenceId, paymentLinkAmount: fine!.amount } }
+  );
 
   redirect(link.shortUrl);
 }

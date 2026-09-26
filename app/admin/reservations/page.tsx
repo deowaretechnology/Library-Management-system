@@ -6,6 +6,7 @@ import {
 } from "@/lib/actions/reservations";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function AdminReservationsPage({
   searchParams,
@@ -35,7 +36,7 @@ export default async function AdminReservationsPage({
         columns={[
           { header: "Student", cell: (r: any) => r.studentId?.name },
           { header: "Sanity Book ID", cell: (r: any) => r.sanityBookId },
-          { header: "Requested", cell: (r: any) => new Date(r.requestedAt).toLocaleDateString() },
+          { header: "Requested", cell: (r: any) => formatIstDate(r.requestedAt) },
           { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },
           {
             header: "",

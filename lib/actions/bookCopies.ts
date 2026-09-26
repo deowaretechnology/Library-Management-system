@@ -12,6 +12,15 @@ import AuditLog from "@/models/AuditLog";
 import BorrowTransaction from "@/models/BorrowTransaction";
 import Reservation from "@/models/Reservation";
 import Student from "@/models/Student";
+import { notify } from "@/lib/notifications/send";
+import { offerCopyToQueue, requeueHoldOnCopy } from "@/lib/domain/reservationQueue";
+
+const COPY_STATUSES = ["AVAILABLE", "ISSUED", "RESERVED", "LOST", "DAMAGED", "REPAIR", "ARCHIVED"];
+
+/** Escapes user input for use inside a RegExp — raw input like "(" crashed the query, and crafted patterns could hang it (ReDoS). */
+function escapeRegex(input: string) {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 const STAFF_ROLES = ["SUPER_ADMIN", "LIBRARIAN"] as const;
 
@@ -61,17 +70,14 @@ export async function listBookCopies(opts: { query?: string; status?: string; pa
   await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
   await connectToDatabase();
 
-  const page = opts.page ?? 1;
-  const pageSize = opts.pageSize ?? 20;
+  const page = Math.max(1, Math.floor(Number(opts.page) || 1));
+  const pageSize = Math.min(100, Math.max(1, Math.floor(Number(opts.pageSize) || 20)));
   const filter: Record<string, unknown> = {};
-  if (opts.status) filter.status = opts.status;
-  if (opts.query) {
-    filter.$or = [
-      { copyId: { $regex: opts.query, $options: "i" } },
-      { barcode: { $regex: opts.query, $options: "i" } },
-      { accessionNumber: { $regex: opts.query, $options: "i" } },
-      { sanityBookId: { $regex: opts.query, $options: "i" } },
-    ];
+  if (opts.status && COPY_STATUSES.includes(String(opts.status))) filter.status = String(opts.status);
+  const q = opts.query ? String(opts.query).trim().slice(0, 64) : "";
+  if (q) {
+    const rx = { $regex: escapeRegex(q), $options: "i" };
+    filter.$or = [{ copyId: rx }, { barcode: rx }, { accessionNumber: rx }, { sanityBookId: rx }];
   }
 
   const [copies, total] = await Promise.all([
@@ -117,8 +123,9 @@ export async function listBookCopies(opts: { query?: string; status?: string; pa
 }
 
 export async function getCopyByBarcode(barcode: string) {
+  await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
   await connectToDatabase();
-  return BookCopy.findOne({ barcode }).lean();
+  return BookCopy.findOne({ barcode: String(barcode).trim() }).lean();
 }
 
 export type BookCopyLookup = {
@@ -153,12 +160,12 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
   await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
   await connectToDatabase();
 
-  const copy: any = await BookCopy.findOne({ barcode: barcode.trim() }).lean();
+  const copy: any = await BookCopy.findOne({ barcode: String(barcode).trim() }).lean();
   if (!copy) return null;
 
   const [book, student] = await Promise.all([
     sanityReadClient.fetch(bookTitleByIdQuery, { id: copy.sanityBookId }),
-    forStudentId ? Student.findOne({ studentId: forStudentId }).lean() : Promise.resolve(null),
+    forStudentId ? Student.findOne({ studentId: String(forStudentId).trim() }).lean() : Promise.resolve(null),
   ]);
 
   let issuedTo: BookCopyLookup["issuedTo"];
@@ -169,18 +176,19 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
   let otherCopyAvailable = false;
 
   if (copy.status === "ISSUED") {
-    const txn: any = await BorrowTransaction.findOne({ bookCopyId: copy._id, status: { $in: ["ACTIVE", "OVERDUE"] } })
-      .populate("studentId", "name libraryId")
-      .lean();
-    if (txn?.studentId) {
-      issuedTo = { name: txn.studentId.name, libraryId: txn.studentId.libraryId, dueDate: txn.dueDate };
-    }
-
     // Reserving only makes sense when NO copy of this title is free right now — if another
     // physical copy is sitting AVAILABLE, that's what should be scanned and issued directly.
     // Checking this here (not just inside reserveForStudentAction) stops the card from ever
     // offering a "Reserve" button that would then fail with a confusing error.
-    const availableElsewhere = await BookCopy.countDocuments({ sanityBookId: copy.sanityBookId, status: "AVAILABLE" });
+    const [txn, availableElsewhere] = await Promise.all([
+      BorrowTransaction.findOne({ bookCopyId: copy._id, status: { $in: ["ACTIVE", "OVERDUE"] } })
+        .populate("studentId", "name libraryId")
+        .lean<any>(),
+      BookCopy.countDocuments({ sanityBookId: copy.sanityBookId, status: "AVAILABLE" }),
+    ]);
+    if (txn?.studentId) {
+      issuedTo = { name: txn.studentId.name, libraryId: txn.studentId.libraryId, dueDate: txn.dueDate };
+    }
 
     if (availableElsewhere > 0) {
       otherCopyAvailable = true;
@@ -246,9 +254,22 @@ export async function markLostOrDamagedAction(formData: FormData) {
   }
 
   const previousStatus = copy!.status;
-  copy!.status = status;
-  copy!.notes = notes ?? "";
-  await copy!.save();
+  let readyFor: { studentId: string } | null = null;
+
+  if (status === "AVAILABLE") {
+    // Restore path: only for copies that were out of circulation.
+    if (!["LOST", "DAMAGED", "REPAIR"].includes(previousStatus)) {
+      redirect(`/admin/lost-damaged?error=${encodeURIComponent(`This copy is ${previousStatus.toLowerCase()}, not lost/damaged — nothing to restore.`)}`);
+    }
+    await BookCopy.updateOne({ _id: copy!._id }, { $set: { notes: notes ?? "" } });
+    // Give it to the next student waiting for this title, if any — otherwise back on the shelf.
+    readyFor = await offerCopyToQueue(copy!._id, copy!.sanityBookId);
+  } else {
+    // A copy being HELD for someone's READY reservation can't serve it any more — put that
+    // reservation back in the queue (it keeps its place) instead of pointing at a lost book.
+    if (previousStatus === "RESERVED") await requeueHoldOnCopy(copy!._id);
+    await BookCopy.updateOne({ _id: copy!._id }, { $set: { status, notes: notes ?? "" } });
+  }
 
   await AuditLog.create({
     userId: session.userId,
@@ -261,6 +282,11 @@ export async function markLostOrDamagedAction(formData: FormData) {
 
   });
 
+  if (readyFor) {
+    await notify(readyFor.studentId, "RESERVATION_READY", "Your reserved book is ready for pickup at the counter.").catch(() => {});
+  }
+
   revalidatePath("/admin/lost-damaged");
+  revalidatePath("/admin/book-copies");
   redirect("/admin/lost-damaged");
 }

@@ -10,6 +10,8 @@ export interface IUser {
   name: string;
   status: UserStatus;
   studentProfile?: Types.ObjectId; // ref -> Student, present only when role === STUDENT
+  /** Bumped on password change — any session token carrying an older value is rejected (lib/auth/requireRole.ts). */
+  sessionVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -26,6 +28,7 @@ const UserSchema = new Schema<IUser>(
     name: { type: String, required: true, trim: true },
     status: { type: String, enum: ["ACTIVE", "INACTIVE", "SUSPENDED"], default: "ACTIVE" },
     studentProfile: { type: Schema.Types.ObjectId, ref: "Student" },
+    sessionVersion: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

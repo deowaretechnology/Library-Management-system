@@ -2,7 +2,12 @@ import { getSession } from "@/lib/auth/session";
 import { getSettings } from "@/lib/actions/settings";
 import { SettingsForm } from "@/components/forms/SettingsForm";
 
-export default async function AdminSettingsPage() {
+export default async function AdminSettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
   const session = await getSession();
   const settings: any = await getSettings();
 
@@ -17,6 +22,7 @@ export default async function AdminSettingsPage() {
   return (
     <div className="max-w-2xl space-y-4 p-6">
       <h1 className="text-xl font-semibold text-slate-900">Library Settings</h1>
+      {error && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       <SettingsForm
         defaults={{
           libraryName: settings.libraryName ?? "",

@@ -1,6 +1,7 @@
 import { getOverdueTransactions } from "@/lib/actions/dashboard";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function AdminOverduePage() {
   const overdue = await getOverdueTransactions();
@@ -21,7 +22,7 @@ export default async function AdminOverduePage() {
         columns={[
           { header: "Student", cell: (r: any) => r.studentId?.name },
           { header: "Phone", cell: (r: any) => r.studentId?.phone },
-          { header: "Due date", cell: (r: any) => new Date(r.dueDate).toLocaleDateString() },
+          { header: "Due date", cell: (r: any) => formatIstDate(r.dueDate) },
           { header: "Days overdue", cell: (r: any) => dayCount(r.dueDate) },
           { header: "Status", cell: () => <StatusBadge status="OVERDUE" /> },
         ]}

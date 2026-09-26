@@ -58,5 +58,6 @@ const BookCopySchema = new Schema<IBookCopy>(
 );
 
 BookCopySchema.index({ sanityBookId: 1, status: 1 });
+BookCopySchema.index({ createdAt: -1 });
 
 export default models.BookCopy || model<IBookCopy>("BookCopy", BookCopySchema);

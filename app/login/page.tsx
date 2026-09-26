@@ -14,7 +14,7 @@ const COPY: Record<Role, { label: string; placeholder: string; helper: string }>
   student: {
     label: "Library ID",
     placeholder: "e.g. LIB-1001",
-    helper: "New here? Your starting password is the same as your Library ID — change it below.",
+    helper: "First time? Sign in with your Library ID as the password — you'll be asked to set a new one.",
   },
   staff: {
     label: "Email",
@@ -30,6 +30,8 @@ function LoginForm() {
   const [state, formAction, pending] = useActionState(login, initialState);
   const copy = COPY[role];
   const passwordChanged = searchParams.get("passwordChanged") === "1";
+  const sessionExpired = searchParams.get("expired") === "1";
+  const accountInactive = searchParams.get("inactive") === "1";
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -64,6 +66,17 @@ function LoginForm() {
 
         <div className="w-full max-w-sm">
           <h2 className="font-serif text-2xl text-ink-950">Sign in</h2>
+
+          {sessionExpired && (
+            <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Your session ended (for example, the password was changed on another device). Please sign in again.
+            </p>
+          )}
+          {accountInactive && (
+            <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              This account is no longer active. Please contact the library.
+            </p>
+          )}
 
           {passwordChanged && (
             <p className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">

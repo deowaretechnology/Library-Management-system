@@ -19,15 +19,24 @@ on:
       - "android/**"
       - "capacitor.config.ts"
       - "public/**"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Only this job needs write access (to publish the release asset).
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,14 +93,35 @@ jobs:
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Build debug APK
+      # Every published APK must be signed with the SAME key, otherwise Android
+      # refuses to install it as an update over the previous version. The key
+      # lives in repo secrets (never in the repo): ANDROID_KEYSTORE_BASE64,
+      # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not set - release APK will be signed with a throwaway debug key and will NOT install as an update over previous builds."
+          fi
+
+      - name: Build release APK
         id: gradle_build
         working-directory: android
         continue-on-error: true
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.0.${{ github.run_number }}
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle-build.log
 
       # The normal Actions log viewer needs an interactive GitHub login, which
       # isn't available everywhere this workflow might be debugged from, so on
@@ -107,7 +137,13 @@ jobs:
       - name: Locate APK
         id: apk
         run: |
-          APK_PATH=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          # Signed builds are app-release.apk; an unsigned build would be
+          # app-release-unsigned.apk - accept whichever .apk is there.
+          APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::No APK found in android/app/build/outputs/apk/release"
+            exit 1
+          fi
           echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
           cp "$APK_PATH" College-Library.apk
 
@@ -124,9 +160,9 @@ jobs:
           name: College Library — latest Android APK
           body: |
             Auto-built from the latest `main` branch by GitHub Actions.
-            This is a debug build (self-signed, installs fine for demo/testing —
-            Android may show an "unknown source" warning on install, which is
-            normal for a debug APK).
+            Signed release build (version 1.0.${{ github.run_number }}) — installs
+            as an update over earlier builds. Android may show an "unknown source"
+            warning on install, which is normal for apps not from the Play Store.
 
             Commit: ${{ github.sha }}
           artifacts: College-Library.apk

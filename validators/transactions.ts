@@ -1,18 +1,18 @@
 import { z } from "zod";
 
 export const issueBookSchema = z.object({
-  studentId: z.string().min(1, "Scan or enter a student ID"),
-  barcode: z.string().min(1, "Scan or enter a copy barcode"),
+  studentId: z.string().trim().min(1, "Scan or enter a student ID").max(64),
+  barcode: z.string().trim().min(1, "Scan or enter a copy barcode").max(64),
 });
 export type IssueBookInput = z.infer<typeof issueBookSchema>;
 
 export const returnBookSchema = z.object({
-  barcode: z.string().min(1, "Scan or enter a copy barcode"),
+  barcode: z.string().trim().min(1, "Scan or enter a copy barcode").max(64),
 });
 export type ReturnBookInput = z.infer<typeof returnBookSchema>;
 
 export const renewBookSchema = z.object({
-  transactionId: z.string().min(1),
+  transactionId: z.string().trim().min(1).max(64),
 });
 export type RenewBookInput = z.infer<typeof renewBookSchema>;
 
@@ -42,31 +42,32 @@ export const createBookCopySchema = z.object({
 export type CreateBookCopyInput = z.infer<typeof createBookCopySchema>;
 
 export const librarySettingsSchema = z.object({
-  libraryName: z.string().min(1, "Library name is required"),
-  libraryEmail: z.string().email("Enter a valid email").or(z.literal("")).optional(),
-  libraryPhone: z.string().optional(),
-  libraryAddress: z.string().optional(),
-  borrowingDurationDays: z.number().int().min(1, "Must be at least 1 day"),
-  maxBooksPerStudent: z.number().int().min(1, "Must be at least 1"),
-  finePerDay: z.number().min(0, "Cannot be negative"),
-  gracePeriodDays: z.number().int().min(0, "Cannot be negative"),
-  maxRenewals: z.number().int().min(0, "Cannot be negative"),
-  maxFineAmount: z.number().min(0, "Cannot be negative"),
+  libraryName: z.string().min(1, "Library name is required").max(120),
+  libraryEmail: z.string().email("Enter a valid email").max(200).or(z.literal("")).optional(),
+  libraryPhone: z.string().max(30).optional(),
+  libraryAddress: z.string().max(300).optional(),
+  borrowingDurationDays: z.number().int().min(1, "Must be at least 1 day").max(365, "At most 365 days"),
+  maxBooksPerStudent: z.number().int().min(1, "Must be at least 1").max(50, "At most 50"),
+  finePerDay: z.number().min(0, "Cannot be negative").max(10000),
+  gracePeriodDays: z.number().int().min(0, "Cannot be negative").max(60),
+  maxRenewals: z.number().int().min(0, "Cannot be negative").max(20),
+  maxFineAmount: z.number().min(0, "Cannot be negative").max(100000),
   allowRenewal: z.boolean(),
 });
 export type LibrarySettingsInput = z.infer<typeof librarySettingsSchema>;
 
 export const markLostDamagedSchema = z.object({
   barcode: z.string().min(1, "Barcode is required"),
-  status: z.enum(["LOST", "DAMAGED", "REPAIR"], { errorMap: () => ({ message: "Choose a status" }) }),
-  notes: z.string().optional(),
+  // AVAILABLE = "found / repaired — put it back in circulation" (there was no way back before).
+  status: z.enum(["LOST", "DAMAGED", "REPAIR", "AVAILABLE"], { errorMap: () => ({ message: "Choose a status" }) }),
+  notes: z.string().max(500).optional(),
 });
 export type MarkLostDamagedInput = z.infer<typeof markLostDamagedSchema>;
 
 export const payFineSchema = z.object({
-  fineId: z.string().min(1),
-  amount: z.number().positive("Enter an amount greater than 0"),
-  paymentMethod: z.string().optional(),
-  paymentReference: z.string().optional(),
+  fineId: z.string().min(1).max(64),
+  amount: z.number().positive("Enter an amount greater than 0").max(1_000_000),
+  paymentMethod: z.string().max(40).optional(),
+  paymentReference: z.string().max(120).optional(),
 });
 export type PayFineInput = z.infer<typeof payFineSchema>;

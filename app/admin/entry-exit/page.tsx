@@ -2,6 +2,7 @@ import { listCurrentlyInside, listRecentVisits } from "@/lib/actions/visits";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EntryExitScanForm } from "@/components/forms/EntryExitScanForm";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function AdminEntryExitPage({
   searchParams,
@@ -39,7 +40,7 @@ export default async function AdminEntryExitPage({
           emptyMessage="No visits yet."
           columns={[
             { header: "Student", cell: (r: any) => r.studentId?.name },
-            { header: "Entry", cell: (r: any) => `${new Date(r.entryDate).toLocaleDateString()} ${r.entryTime}` },
+            { header: "Entry", cell: (r: any) => `${formatIstDate(r.entryDate)} ${r.entryTime}` },
             { header: "Exit", cell: (r: any) => (r.exitTime ? r.exitTime : "—") },
             { header: "Duration (min)", cell: (r: any) => r.durationMinutes ?? "—" },
             { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },

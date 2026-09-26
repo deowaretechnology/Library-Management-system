@@ -41,6 +41,12 @@ export type CatalogBook = {
 };
 
 export async function searchCatalog(term: string, page = 1, pageSize = 20) {
+  // Signed-in users only, and bounded — an unbounded pageSize let anyone make the server
+  // pull the whole catalog from Sanity + aggregate every copy in Mongo per request.
+  await requireRole(["STUDENT", "SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  term = String(term ?? "").slice(0, 100);
+  page = Math.max(1, Math.floor(Number(page) || 1));
+  pageSize = Math.min(200, Math.max(1, Math.floor(Number(pageSize) || 20)));
   const start = (page - 1) * pageSize;
   const end = start + pageSize;
 
@@ -357,6 +363,9 @@ export async function createBookAction(formData: FormData) {
 }
 
 export async function getBookDetail(sanityBookId: string) {
+  // Staff-only: returns every copy's barcode, location and notes.
+  await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  sanityBookId = String(sanityBookId);
   const [book, copies] = await Promise.all([
     sanityReadClient.fetch(bookByIdQuery, { id: sanityBookId }),
     (async () => {

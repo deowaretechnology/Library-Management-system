@@ -19,6 +19,8 @@ export interface IStudent {
   status: StudentStatus;
   clearanceConfirmedAt?: Date;
   clearanceConfirmedBy?: Types.ObjectId; // ref -> User
+  /** Touched inside every issue transaction so two simultaneous issues for the same student conflict and serialize (borrow-limit race fix). */
+  lastIssueAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,8 +47,11 @@ const StudentSchema = new Schema<IStudent>(
     },
     clearanceConfirmedAt: { type: Date },
     clearanceConfirmedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    lastIssueAt: { type: Date },
   },
   { timestamps: true }
 );
+
+StudentSchema.index({ createdAt: -1 });
 
 export default models.Student || model<IStudent>("Student", StudentSchema);

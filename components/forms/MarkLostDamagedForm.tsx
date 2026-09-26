@@ -36,6 +36,7 @@ export function MarkLostDamagedForm() {
           <option value="LOST">Lost</option>
           <option value="DAMAGED">Damaged</option>
           <option value="REPAIR">Needs repair</option>
+          <option value="AVAILABLE">Found / repaired — back to shelf</option>
         </select>
         {errors.status && <p className="mt-1 text-xs text-red-600">{errors.status.message}</p>}
       </div>

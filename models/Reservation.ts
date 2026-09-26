@@ -39,7 +39,10 @@ const ReservationSchema = new Schema<IReservation>({
   notes: { type: String },
 });
 
-ReservationSchema.index({ sanityBookId: 1, status: 1 });
+ReservationSchema.index({ sanityBookId: 1, status: 1, requestedAt: 1 }); // queue order
 ReservationSchema.index({ studentId: 1, status: 1 });
+ReservationSchema.index({ status: 1, requestedAt: -1 }); // admin list + awaiting-approval badge (every admin page)
+ReservationSchema.index({ bookCopyId: 1, status: 1 });
+ReservationSchema.index({ status: 1, readyAt: 1 }); // hold-expiry sweep
 
 export default models.Reservation || model<IReservation>("Reservation", ReservationSchema);

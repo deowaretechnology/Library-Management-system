@@ -1,6 +1,7 @@
 import { getDueSoonTransactions } from "@/lib/actions/dashboard";
 import { renewBookFormAction } from "@/lib/actions/transactions";
 import { DataTable } from "@/components/DataTable";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function AdminRenewalsPage({
   searchParams,
@@ -21,7 +22,7 @@ export default async function AdminRenewalsPage({
         emptyMessage="Nothing due soon."
         columns={[
           { header: "Student", cell: (r: any) => `${r.studentId?.name} (${r.studentId?.studentId})` },
-          { header: "Due", cell: (r: any) => new Date(r.dueDate).toLocaleDateString() },
+          { header: "Due", cell: (r: any) => formatIstDate(r.dueDate) },
           { header: "Renewals used", cell: (r: any) => r.renewalCount },
           {
             header: "",

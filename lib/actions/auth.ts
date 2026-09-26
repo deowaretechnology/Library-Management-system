@@ -7,7 +7,7 @@ import { Types } from "mongoose";
 import { connectToDatabase } from "@/lib/db/mongodb";
 import { verifyPassword, hashPassword } from "@/lib/auth/password";
 import { createSession, clearSession } from "@/lib/auth/session";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit, isBlocked, recordFailure } from "@/lib/rate-limit";
 import { changePasswordSchema } from "@/validators/account";
 import User, { IUser } from "@/models/User";
 import Student, { IStudent } from "@/models/Student";
@@ -41,6 +41,47 @@ async function findUserByIdentifier(identifier: string) {
 
 export type LoginState = { error?: string };
 
+// Compared against when the identifier doesn't exist, so a wrong ID takes as long as a
+// wrong password — response time no longer reveals which Library IDs are real.
+let dummyHashPromise: Promise<string> | null = null;
+function getDummyHash() {
+  dummyHashPromise ??= hashPassword("timing-equaliser-not-a-real-password");
+  return dummyHashPromise;
+}
+
+function clientIp(h: Headers) {
+  return h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+}
+
+const FIVE_MIN = 5 * 60 * 1000;
+const FIFTEEN_MIN = 15 * 60 * 1000;
+
+/**
+ * Brute-force protection, three layers:
+ *  - per IP+identifier: every attempt counts (a real user never needs 5 tries in 5 min);
+ *  - per IP and per identifier: only FAILED attempts count — so a campus sharing one NAT IP
+ *    can all sign in, but one source spraying "password = Library ID" across thousands of
+ *    IDs (or hammering one account from many IPs) gets cut off.
+ */
+function checkAuthLimits(prefix: string, ip: string, id: string) {
+  const pair = rateLimit(`${prefix}:${ip}:${id}`, 5, FIVE_MIN);
+  const byIp = isBlocked(`${prefix}-ip:${ip}`, 60);
+  const byId = isBlocked(`${prefix}-id:${id}`, 15);
+  const blocked = !pair.allowed || byIp.blocked || byId.blocked;
+  return { blocked, retryAfterMs: Math.max(pair.retryAfterMs, byIp.retryAfterMs, byId.retryAfterMs) };
+}
+function recordAuthFailure(prefix: string, ip: string, id: string) {
+  recordFailure(`${prefix}-ip:${ip}`, FIVE_MIN);
+  recordFailure(`${prefix}-id:${id}`, FIFTEEN_MIN);
+}
+
+/** Password still equals the Library/Student ID it was created with (printed on the ID card). */
+function isDefaultStudentPassword(password: string, student: LeanStudent | null) {
+  if (!student) return false;
+  const p = password.trim().toLowerCase();
+  return p === student.libraryId.toLowerCase() || p === student.studentId.toLowerCase();
+}
+
 export async function login(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const parsed = loginSchema.safeParse({
     identifier: formData.get("identifier"),
@@ -48,34 +89,53 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  const { allowed, retryAfterMs } = rateLimit(`login:${ip}:${parsed.data.identifier.toLowerCase()}`, 5, 5 * 60 * 1000);
-  if (!allowed) {
+  const identifier = parsed.data.identifier.trim();
+  const ip = clientIp(await headers());
+  const idKey = identifier.toLowerCase();
+  const { blocked, retryAfterMs } = checkAuthLimits("login", ip, idKey);
+  if (blocked) {
     return { error: `Too many attempts. Try again in ${Math.ceil(retryAfterMs / 60000)} minute(s).` };
   }
 
   try {
     await connectToDatabase();
   } catch {
-    // connectToDatabase() now gives up after ~4.5s instead of hanging — this turns that
-    // into a clean message instead of an unhandled crash (master spec §39: never show
-    // raw database errors).
+    // connectToDatabase() gives up after ~4.5s instead of hanging — this turns that into a
+    // clean message instead of an unhandled crash (master spec §39: never show raw DB errors).
     return { error: "Could not reach the library database. Check your connection and try again." };
   }
 
-  const { student, user } = await findUserByIdentifier(parsed.data.identifier);
+  const found = await findUserByIdentifier(identifier);
+  const user = found.user;
+  let student = found.student;
 
-  if (!user) return { error: "Invalid credentials." };
-  if (user.status !== "ACTIVE") return { error: "This account is not active." };
+  // Password is ALWAYS checked before anything account-specific is revealed, and with the
+  // same cost whether or not the account exists.
+  const valid = await verifyPassword(parsed.data.password, user?.passwordHash ?? (await getDummyHash()));
+  if (!user || !valid) {
+    recordAuthFailure("login", ip, idKey);
+    return { error: "Invalid credentials." };
+  }
 
-  const valid = await verifyPassword(parsed.data.password, user.passwordHash);
-  if (!valid) return { error: "Invalid credentials." };
+  // A student who signs in with their EMAIL instead of their Library ID still has a
+  // Student profile — load it, or the default-password check below would be skipped.
+  if (user.role === "STUDENT" && !student) {
+    student = await Student.findOne({ userId: user._id }).lean<LeanStudent>();
+  }
+  if (user.status !== "ACTIVE") return { error: "This account is not active. Please contact the library." };
+
+  // Default passwords are printed on every student's ID card — anyone could sign in as
+  // anyone. Force a change before the first real session is ever issued.
+  if (user.role === "STUDENT" && isDefaultStudentPassword(parsed.data.password, student)) {
+    redirect(`/change-password?first=1&id=${encodeURIComponent(identifier)}`);
+  }
 
   await createSession({
     userId: user._id.toString(),
     role: user.role,
     name: user.name,
     studentId: student?.studentId,
+    sv: user.sessionVersion ?? 0,
   });
 
   redirect(user.role === "STUDENT" ? "/student/dashboard" : "/admin/dashboard");
@@ -105,13 +165,10 @@ export async function changePassword(_prev: ChangePasswordState, formData: FormD
 
   // This endpoint is itself a credential-guessing surface (attacker supplies guesses for
   // "current password"), so it gets the same rate limit as login itself.
-  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  const { allowed, retryAfterMs } = rateLimit(
-    `changepw:${ip}:${parsed.data.identifier.toLowerCase()}`,
-    5,
-    5 * 60 * 1000
-  );
-  if (!allowed) {
+  const ip = clientIp(await headers());
+  const id = parsed.data.identifier.trim().toLowerCase();
+  const { blocked, retryAfterMs } = checkAuthLimits("changepw", ip, id);
+  if (blocked) {
     return { error: `Too many attempts. Try again in ${Math.ceil(retryAfterMs / 60000)} minute(s).` };
   }
 
@@ -121,19 +178,31 @@ export async function changePassword(_prev: ChangePasswordState, formData: FormD
     return { error: "Could not reach the library database. Check your connection and try again." };
   }
 
-  const { user } = await findUserByIdentifier(parsed.data.identifier);
+  const found = await findUserByIdentifier(parsed.data.identifier.trim());
+  const user = found.user;
+  let student = found.student;
 
-  // Same generic message whether the identifier doesn't exist or the password is wrong —
-  // never reveal which one, that's exactly what lets someone enumerate valid Library IDs.
+  // Same generic message (and same bcrypt cost) whether the identifier doesn't exist or the
+  // password is wrong — never reveal which, that's what lets someone enumerate Library IDs.
   const invalid = { error: "Current identifier or password is incorrect." };
-  if (!user) return invalid;
+  const valid = await verifyPassword(parsed.data.currentPassword, user?.passwordHash ?? (await getDummyHash()));
+  if (!user || !valid) {
+    recordAuthFailure("changepw", ip, id);
+    return invalid;
+  }
+  if (user.role === "STUDENT" && !student) {
+    student = await Student.findOne({ userId: user._id }).lean<LeanStudent>();
+  }
   if (user.status !== "ACTIVE") return { error: "This account is not active." };
 
-  const valid = await verifyPassword(parsed.data.currentPassword, user.passwordHash);
-  if (!valid) return invalid;
+  if (isDefaultStudentPassword(parsed.data.newPassword, student)) {
+    return { error: "Choose a password that isn't your Library ID or Student ID." };
+  }
 
   const passwordHash = await hashPassword(parsed.data.newPassword);
-  await User.updateOne({ _id: user._id }, { $set: { passwordHash } });
+  // Bumping sessionVersion signs out every existing session (e.g. an attacker who had the
+  // old password) — requireSession() rejects tokens carrying an older version.
+  await User.updateOne({ _id: user._id }, { $set: { passwordHash }, $inc: { sessionVersion: 1 } });
 
   await AuditLog.create({
     userId: user._id,

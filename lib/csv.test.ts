@@ -22,4 +22,12 @@ describe("toCSV", () => {
     const csv = toCSV([{ name: "Raj" }], [{ key: "missing", header: "Missing" }]);
     expect(csv).toBe("Missing\n");
   });
+
+  it("neutralises spreadsheet formulas in text cells (CSV injection)", () => {
+    const csv = toCSV([{ name: "=HYPERLINK(\"http://x\")", n: -5 }], [
+      { key: "name", header: "Name" },
+      { key: "n", header: "N" },
+    ]);
+    expect(csv).toBe('Name,N\n"\'=HYPERLINK(""http://x"")",-5');
+  });
 });

@@ -4,6 +4,7 @@ import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TrendChart } from "@/components/TrendChart";
 import { getDashboardStats, getRecentActivity, getIssuesTrend } from "@/lib/actions/dashboard";
+import { formatIstDate } from "@/lib/domain/dates";
 
 export default async function AdminDashboardPage() {
   const [stats, activity, trend] = await Promise.all([getDashboardStats(), getRecentActivity(), getIssuesTrend()]);
@@ -39,7 +40,7 @@ export default async function AdminDashboardPage() {
             columns={[
               { header: "Student", cell: (r: any) => r.studentId?.name ?? "—" },
               { header: "Copy", cell: (r: any) => r.bookCopyId?.toString().slice(-6) },
-              { header: "Due", cell: (r: any) => new Date(r.dueDate).toLocaleDateString() },
+              { header: "Due", cell: (r: any) => formatIstDate(r.dueDate) },
               { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },
             ]}
           />
@@ -51,7 +52,7 @@ export default async function AdminDashboardPage() {
             emptyMessage="No returns yet."
             columns={[
               { header: "Student", cell: (r: any) => r.studentId?.name ?? "—" },
-              { header: "Returned", cell: (r: any) => r.returnDate ? new Date(r.returnDate).toLocaleDateString() : "—" },
+              { header: "Returned", cell: (r: any) => r.returnDate ? formatIstDate(r.returnDate) : "—" },
               { header: "Status", cell: (r: any) => <StatusBadge status={r.status} /> },
             ]}
           />

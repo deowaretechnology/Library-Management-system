@@ -12,8 +12,15 @@ import Student from "@/models/Student";
 import BorrowTransaction from "@/models/BorrowTransaction";
 import Fine from "@/models/Fine";
 import LibrarySettings from "@/models/LibrarySettings";
+import AuditLog from "@/models/AuditLog";
 
 const STAFF_ROLES = ["SUPER_ADMIN", "LIBRARIAN"] as const;
+const ALL_ROLES = ["STUDENT", "SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"] as const;
+const STUDENT_STATUSES = ["ACTIVE", "INACTIVE", "SUSPENDED", "GRADUATED", "BLOCKED"];
+
+function escapeRegex(input: string) {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 export async function createStudentAction(formData: FormData) {
   await requireRole([...STAFF_ROLES]);
@@ -72,16 +79,15 @@ export async function listStudents(opts: {
   await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
   await connectToDatabase();
 
-  const page = opts.page ?? 1;
-  const pageSize = opts.pageSize ?? 20;
+  const page = Math.max(1, Math.floor(Number(opts.page) || 1));
+  const pageSize = Math.min(100, Math.max(1, Math.floor(Number(opts.pageSize) || 20)));
   const filter: Record<string, unknown> = {};
-  if (opts.status) filter.status = opts.status;
-  if (opts.query) {
-    filter.$or = [
-      { name: { $regex: opts.query, $options: "i" } },
-      { studentId: { $regex: opts.query, $options: "i" } },
-      { libraryId: { $regex: opts.query, $options: "i" } },
-    ];
+  if (opts.status && STUDENT_STATUSES.includes(String(opts.status))) filter.status = String(opts.status);
+  const q = opts.query ? String(opts.query).trim().slice(0, 64) : "";
+  if (q) {
+    // Escaped: raw input like "(" used to crash the page, and a crafted pattern could hang the DB.
+    const rx = { $regex: escapeRegex(q), $options: "i" };
+    filter.$or = [{ name: rx }, { studentId: rx }, { libraryId: rx }];
   }
 
   const [students, total] = await Promise.all([
@@ -97,12 +103,27 @@ export async function listStudents(opts: {
 }
 
 export async function updateStudentStatusAction(formData: FormData) {
-  await requireRole([...STAFF_ROLES]);
-  const studentId = String(formData.get("studentId"));
-  const status = String(formData.get("status"));
+  const session = await requireRole([...STAFF_ROLES]);
+  const studentId = String(formData.get("studentId") ?? "");
+  const status = String(formData.get("status") ?? "");
+  // updateOne skips enum validation — any string used to be writable as a status.
+  if (!STUDENT_STATUSES.includes(status)) {
+    redirect(`/admin/students?error=${encodeURIComponent("Invalid status.")}`);
+  }
 
   await connectToDatabase();
-  await Student.updateOne({ studentId }, { $set: { status } });
+  const before = await Student.findOneAndUpdate({ studentId }, { $set: { status } }, { new: false }).lean<any>();
+  if (before && before.status !== status) {
+    await AuditLog.create({
+      userId: session.userId,
+      role: session.role,
+      action: "STUDENT_STATUS_CHANGED",
+      entityType: "Student",
+      entityId: studentId,
+      previousValue: { status: before.status },
+      newValue: { status },
+    });
+  }
 
   revalidatePath("/admin/students");
   redirect("/admin/students");
@@ -148,7 +169,7 @@ export async function getStudentIssueProfileAction(studentId: string): Promise<S
   await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
   await connectToDatabase();
 
-  const student: any = await Student.findOne({ studentId: studentId.trim() }).lean();
+  const student: any = await Student.findOne({ studentId: String(studentId).trim() }).lean();
   if (!student) return null;
 
   const settings: any = (await LibrarySettings.findOne().lean()) ?? { maxBooksPerStudent: 3 };
@@ -178,28 +199,33 @@ export async function getStudentIssueProfileAction(studentId: string): Promise<S
 }
 
 export async function getStudentDetail(studentId: string) {
+  // Previously had NO auth check at all — as a server action it was directly callable and
+  // returned any student's full record (email, phone, loans, fines) to anyone.
+  const session = await requireRole([...ALL_ROLES]);
+  assertOwnStudentRecord(session, String(studentId));
+
   await connectToDatabase();
-  const student: any = await Student.findOne({ studentId }).lean();
+  const student: any = await Student.findOne({ studentId: String(studentId) }).lean();
   if (!student) return null;
 
   const [activeBorrows, allBorrows, fines] = await Promise.all([
     BorrowTransaction.find({ studentId: student._id, status: "ACTIVE" }).lean(),
     BorrowTransaction.find({ studentId: student._id }).sort({ issueDate: -1 }).limit(50).lean(),
-    Fine.find({ studentId: student._id }).sort({ createdAt: -1 }).lean(),
+    Fine.find({ studentId: student._id }).sort({ createdAt: -1 }).limit(100).lean(),
   ]);
 
   return { student, activeBorrows, allBorrows, fines };
 }
 
 /** CLEARED only if no active books, no pending/partial fines, no unresolved lost/damaged copies. */
-export async function getClearanceStatus(studentId: string, sessionStudentIdOwnershipCheck?: string) {
+export async function getClearanceStatus(studentId: string, _legacyOwnershipArg?: string) {
+  // Auth is now unconditional — it used to run only when the 2nd argument was passed.
+  const session = await requireRole([...ALL_ROLES]);
+  assertOwnStudentRecord(session, String(studentId));
+
   await connectToDatabase();
-  const student = await Student.findOne({ studentId });
+  const student = await Student.findOne({ studentId: String(studentId) }).select("_id").lean<any>();
   if (!student) throw new Error("Student not found.");
-  if (sessionStudentIdOwnershipCheck) {
-    const session = await requireRole(["STUDENT", "SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
-    assertOwnStudentRecord(session, sessionStudentIdOwnershipCheck);
-  }
 
   const [activeCount, pendingFines] = await Promise.all([
     BorrowTransaction.countDocuments({ studentId: student._id, status: "ACTIVE" }),

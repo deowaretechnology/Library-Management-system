@@ -63,7 +63,13 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
       // connection ready" half of the fix; instrumentation.ts (server boot) is the other
       // half, so the very first real request never pays the connect cost either.
       minPoolSize: 1,
-      maxPoolSize: 10,
+      // 5 per serverless instance (was 10): Atlas M0/M2 caps total connections at 500, and
+      // under a traffic spike Vercel runs many instances at once — 10 each (+ monitoring
+      // sockets) exhausted the cap at ~30 instances and new requests failed to connect.
+      maxPoolSize: 5,
+      // Close sockets idle for 60s (the one minPoolSize connection stays warm) so frozen
+      // instances don't sit on connections the cluster needs elsewhere.
+      maxIdleTimeMS: 60000,
     });
   }
 

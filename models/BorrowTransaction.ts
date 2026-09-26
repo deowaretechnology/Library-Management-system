@@ -38,6 +38,18 @@ const BorrowTransactionSchema = new Schema<IBorrowTransaction>(
 BorrowTransactionSchema.index({ studentId: 1, status: 1 });
 BorrowTransactionSchema.index({ bookCopyId: 1, status: 1 });
 BorrowTransactionSchema.index({ dueDate: 1 });
+// Database-level backstop against double-issue: at most ONE active loan per physical copy,
+// even if two counters race past the application checks.
+BorrowTransactionSchema.index(
+  { bookCopyId: 1 },
+  { unique: true, partialFilterExpression: { status: "ACTIVE" }, name: "one_active_loan_per_copy" }
+);
+// Hot paths: overdue/due-soon lists + cron sweep, dashboard "today" counts, recent activity,
+// reports, and a student's borrowing history.
+BorrowTransactionSchema.index({ status: 1, dueDate: 1 });
+BorrowTransactionSchema.index({ issueDate: -1 });
+BorrowTransactionSchema.index({ status: 1, returnDate: -1 });
+BorrowTransactionSchema.index({ studentId: 1, issueDate: -1 });
 
 export default models.BorrowTransaction ||
   model<IBorrowTransaction>("BorrowTransaction", BorrowTransactionSchema);
