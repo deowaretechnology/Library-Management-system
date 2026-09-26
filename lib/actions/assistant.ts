@@ -138,38 +138,43 @@ ${personalContext}`;
       { role: "user", parts: [{ text: trimmed }] },
     ];
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-      {
+    const requestBody = JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents,
+      generationConfig: { temperature: 0.3, maxOutputTokens: 400 },
+    });
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+    // Gemini occasionally returns 503 ("model overloaded") / 429 (rate limited)
+    // for a moment under load — these are transient, so retry a couple of times
+    // with a short backoff before giving up, instead of failing the user's
+    // question on the first blip.
+    let res: Response | null = null;
+    let lastBody = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents,
-          generationConfig: { temperature: 0.3, maxOutputTokens: 400 },
-        }),
-      }
-    );
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error("Gemini API error:", res.status, body);
-      let detail = "";
-      try {
-        detail = JSON.parse(body)?.error?.message ?? "";
-      } catch {
-        // body wasn't JSON — ignore, we'll just show the status code
-      }
-      // TEMP diagnostic detail appended so we can pinpoint the real cause from a
-      // screenshot without server log access — remove once this is confirmed working.
-      return {
-        error: `The assistant couldn't reach the AI service right now (status ${res.status}${
-          detail ? `: ${detail}` : ""
-        }) — try again in a moment.`,
-      };
+        body: requestBody,
+      });
+      if (res.ok) break;
+      if (res.status !== 503 && res.status !== 429) break;
+      lastBody = await res.text().catch(() => "");
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
     }
 
-    const data = await res.json();
+    if (!res!.ok) {
+      const body = lastBody || (await res!.text().catch(() => ""));
+      console.error("Gemini API error:", res!.status, body);
+      if (res!.status === 503 || res!.status === 429) {
+        return {
+          error: "The AI service is busy right now — please try that question again in a few seconds.",
+        };
+      }
+      return { error: "The assistant couldn't reach the AI service right now — try again in a moment." };
+    }
+
+    const data = await res!.json();
     const answer: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!answer) {
