@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { connectToDatabase } from "@/lib/db/mongodb";
 import { requireRole, assertOwnStudentRecord } from "@/lib/auth/requireRole";
+import { notify } from "@/lib/notifications/send";
 import Reservation from "@/models/Reservation";
 import Student from "@/models/Student";
 import BookCopy from "@/models/BookCopy";
@@ -27,17 +28,22 @@ export async function reserveBookAction(formData: FormData) {
   const existing = await Reservation.findOne({
     studentId: student!._id,
     sanityBookId,
-    status: { $in: ["PENDING", "READY"] },
+    status: { $in: ["AWAITING_APPROVAL", "PENDING", "READY"] },
   });
   if (existing) redirect(`/student/books?error=${encodeURIComponent("You already have a reservation for this title.")}`);
 
+  // Student-initiated reservations start as AWAITING_APPROVAL — they don't hold a spot
+  // in the queue (a due-back copy can't be offered to them) until a librarian approves
+  // the request. Staff-created reservations (reserveForStudentAction, below) skip this —
+  // a staff member creating it IS the approval.
   await Reservation.create({
     reservationId: `RES-${Date.now()}`,
     studentId: student!._id,
     sanityBookId,
-    status: "PENDING",
+    status: "AWAITING_APPROVAL",
   });
 
+  revalidatePath("/admin/reservations");
   revalidatePath("/student/reservations");
   redirect("/student/reservations?success=1");
 }
@@ -67,9 +73,16 @@ export async function reserveForStudentAction(
     const existing = await Reservation.findOne({
       studentId: student._id,
       sanityBookId,
-      status: { $in: ["PENDING", "READY"] },
+      status: { $in: ["AWAITING_APPROVAL", "PENDING", "READY"] },
     });
-    if (existing) return { error: "This student already has a reservation for this title." };
+    if (existing) {
+      return {
+        error:
+          existing.status === "AWAITING_APPROVAL"
+            ? "This student already requested this title — approve it from the Reservations page instead."
+            : "This student already has a reservation for this title.",
+      };
+    }
 
     await Reservation.create({
       reservationId: `RES-${Date.now()}`,
@@ -84,6 +97,63 @@ export async function reserveForStudentAction(
   } catch (err) {
     return { error: (err as Error).message };
   }
+}
+
+/**
+ * Turns a student-requested AWAITING_APPROVAL reservation into a real, queued PENDING
+ * one — from here on it behaves exactly like a staff-created reservation (eligible to
+ * be offered the next returned copy).
+ */
+export async function approveReservationAction(formData: FormData) {
+  const session = await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  const reservationId = String(formData.get("reservationId"));
+
+  await connectToDatabase();
+  const reservation = await Reservation.findOne({ reservationId });
+  if (!reservation || reservation.status !== "AWAITING_APPROVAL") {
+    revalidatePath("/admin/reservations");
+    return;
+  }
+
+  reservation.status = "PENDING";
+  reservation.approvedAt = new Date();
+  reservation.approvedBy = session.userId as any;
+  await reservation.save();
+
+  await notify(reservation.studentId.toString(), "RESERVATION_APPROVED", "Your book reservation was approved and is now in the queue.");
+
+  revalidatePath("/admin/reservations");
+  revalidatePath("/student/reservations");
+}
+
+/** Declines a student's AWAITING_APPROVAL request — same effect as cancelling, but tells the student it was rejected rather than that they cancelled it themselves. */
+export async function rejectReservationAction(formData: FormData) {
+  const session = await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  void session;
+  const reservationId = String(formData.get("reservationId"));
+
+  await connectToDatabase();
+  const reservation = await Reservation.findOne({ reservationId });
+  if (!reservation || reservation.status !== "AWAITING_APPROVAL") {
+    revalidatePath("/admin/reservations");
+    return;
+  }
+
+  reservation.status = "CANCELLED";
+  reservation.cancelledAt = new Date();
+  await reservation.save();
+
+  await notify(reservation.studentId.toString(), "RESERVATION_REJECTED", "Your book reservation request wasn't approved. Contact the library desk for details.");
+
+  revalidatePath("/admin/reservations");
+  revalidatePath("/student/reservations");
+}
+
+/** Powers the sidebar badge that surfaces new student reservation requests to staff. */
+export async function countReservationsAwaitingApproval(): Promise<number> {
+  await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  await connectToDatabase();
+  return Reservation.countDocuments({ status: "AWAITING_APPROVAL" });
 }
 
 export async function cancelReservationAction(formData: FormData) {

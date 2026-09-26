@@ -17,6 +17,7 @@ const TONE_BY_STATUS: Record<string, string> = {
   INACTIVE: "bg-slate-100 text-slate-700",
   GRADUATED: "bg-slate-100 text-slate-700",
   PENDING: "bg-amber-100 text-amber-800",
+  AWAITING_APPROVAL: "bg-amber-100 text-amber-800",
   PARTIALLY_PAID: "bg-amber-100 text-amber-800",
   PAID: "bg-emerald-100 text-emerald-800",
   WAIVED: "bg-slate-100 text-slate-700",

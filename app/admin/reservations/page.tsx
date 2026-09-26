@@ -1,4 +1,9 @@
-import { listReservations, cancelReservationAction } from "@/lib/actions/reservations";
+import {
+  listReservations,
+  cancelReservationAction,
+  approveReservationAction,
+  rejectReservationAction,
+} from "@/lib/actions/reservations";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 
@@ -17,8 +22,8 @@ export default async function AdminReservationsPage({
       <form className="flex gap-2" action="/admin/reservations">
         <select name="status" defaultValue={status} className="rounded-md border border-slate-300 px-3 py-2 text-sm">
           <option value="">All statuses</option>
-          {["PENDING", "READY", "FULFILLED", "CANCELLED", "EXPIRED"].map((s) => (
-            <option key={s} value={s}>{s}</option>
+          {["AWAITING_APPROVAL", "PENDING", "READY", "FULFILLED", "CANCELLED", "EXPIRED"].map((s) => (
+            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
           ))}
         </select>
         <button className="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">Filter</button>
@@ -35,7 +40,22 @@ export default async function AdminReservationsPage({
           {
             header: "",
             cell: (r: any) =>
-              r.status === "PENDING" || r.status === "READY" ? (
+              r.status === "AWAITING_APPROVAL" ? (
+                <div className="flex gap-1.5">
+                  <form action={approveReservationAction}>
+                    <input type="hidden" name="reservationId" value={r.reservationId} />
+                    <button className="rounded-md bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700">
+                      Approve
+                    </button>
+                  </form>
+                  <form action={rejectReservationAction}>
+                    <input type="hidden" name="reservationId" value={r.reservationId} />
+                    <button className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">
+                      Reject
+                    </button>
+                  </form>
+                </div>
+              ) : r.status === "PENDING" || r.status === "READY" ? (
                 <form action={cancelReservationAction}>
                   <input type="hidden" name="reservationId" value={r.reservationId} />
                   <button className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Cancel</button>

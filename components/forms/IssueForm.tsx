@@ -272,6 +272,9 @@ export function IssueForm() {
                 {bookLookup.alreadyReservedByStudent && (
                   <p className="mt-1.5 text-xs text-slate-500">{profile.name} already has a reservation for this title.</p>
                 )}
+                {bookLookup.awaitingApprovalByStudent && (
+                  <p className="mt-1.5 text-xs text-slate-500">{profile.name} already requested this title — approve it from the Reservations page instead of reserving again here.</p>
+                )}
               </div>
             </div>
           </div>

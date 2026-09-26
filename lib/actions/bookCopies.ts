@@ -132,6 +132,7 @@ export type BookCopyLookup = {
   canIssue: boolean;
   canReserve: boolean;
   alreadyReservedByStudent: boolean;
+  awaitingApprovalByStudent: boolean;
   issuedTo?: { name: string; libraryId: string; dueDate: Date };
 };
 
@@ -162,6 +163,7 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
   let canIssue = copy.status === "AVAILABLE";
   let canReserve = false;
   let alreadyReservedByStudent = false;
+  let awaitingApprovalByStudent = false;
 
   if (copy.status === "ISSUED") {
     const txn: any = await BorrowTransaction.findOne({ bookCopyId: copy._id, status: { $in: ["ACTIVE", "OVERDUE"] } })
@@ -171,12 +173,17 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
       issuedTo = { name: txn.studentId.name, libraryId: txn.studentId.libraryId, dueDate: txn.dueDate };
     }
     if (student) {
-      const existing = await Reservation.findOne({
+      // Includes AWAITING_APPROVAL so staff can't create a second, duplicate PENDING
+      // reservation via Quick Issue while the student's own self-requested one still
+      // sits unapproved — canReserve stays false either way; the flags below just
+      // decide which explanatory line the confirmation card shows.
+      const existing: any = await Reservation.findOne({
         studentId: (student as any)._id,
         sanityBookId: copy.sanityBookId,
-        status: { $in: ["PENDING", "READY"] },
+        status: { $in: ["AWAITING_APPROVAL", "PENDING", "READY"] },
       }).lean();
-      if (existing) alreadyReservedByStudent = true;
+      if (existing?.status === "AWAITING_APPROVAL") awaitingApprovalByStudent = true;
+      else if (existing) alreadyReservedByStudent = true;
       else canReserve = true;
     }
   }
@@ -201,6 +208,7 @@ export async function getBookCopyLookupAction(barcode: string, forStudentId?: st
     canIssue,
     canReserve,
     alreadyReservedByStudent,
+    awaitingApprovalByStudent,
     issuedTo,
   };
 }

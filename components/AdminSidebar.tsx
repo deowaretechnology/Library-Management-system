@@ -76,9 +76,12 @@ export function getAdminNav(userRole?: string) {
 export function AdminSidebar({
   userName,
   userRole,
+  pendingReservationCount = 0,
 }: {
   userName?: string;
   userRole?: string;
+  /** Student-requested reservations still AWAITING_APPROVAL — shown as a badge on "Reservations" so staff notice new requests without a dedicated notification system. */
+  pendingReservationCount?: number;
 }) {
   const pathname = usePathname();
   const nav = getAdminNav(userRole);
@@ -117,7 +120,12 @@ export function AdminSidebar({
                     }`}
                   >
                     <Icon className="h-4 w-4 shrink-0" />
-                    <span className="truncate">{label}</span>
+                    <span className="flex-1 truncate">{label}</span>
+                    {href === "/admin/reservations" && pendingReservationCount > 0 && (
+                      <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                        {pendingReservationCount > 99 ? "99+" : pendingReservationCount}
+                      </span>
+                    )}
                   </Link>
                 );
               })}

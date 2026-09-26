@@ -15,7 +15,15 @@ import { getAdminNav } from "./AdminSidebar";
  * width replacement: a hamburger button (rendered in the admin header) that
  * opens the same nav links as a slide-in drawer.
  */
-export function AdminMobileNav({ userName, userRole }: { userName?: string; userRole?: string }) {
+export function AdminMobileNav({
+  userName,
+  userRole,
+  pendingReservationCount = 0,
+}: {
+  userName?: string;
+  userRole?: string;
+  pendingReservationCount?: number;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -86,7 +94,12 @@ export function AdminMobileNav({ userName, userRole }: { userName?: string; user
                           }`}
                         >
                           <Icon className="h-4 w-4 shrink-0" />
-                          <span className="truncate">{label}</span>
+                          <span className="flex-1 truncate">{label}</span>
+                          {href === "/admin/reservations" && pendingReservationCount > 0 && (
+                            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                              {pendingReservationCount > 99 ? "99+" : pendingReservationCount}
+                            </span>
+                          )}
                         </Link>
                       );
                     })}

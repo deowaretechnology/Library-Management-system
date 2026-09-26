@@ -6,6 +6,8 @@ export type NotificationType =
   | "OVERDUE"
   | "FINE_ISSUED"
   | "RESERVATION_READY"
+  | "RESERVATION_APPROVED"
+  | "RESERVATION_REJECTED"
   | "ANNOUNCEMENT";
 
 export interface INotification {
@@ -21,7 +23,16 @@ const NotificationSchema = new Schema<INotification>(
     studentId: { type: Schema.Types.ObjectId, ref: "Student", required: true },
     type: {
       type: String,
-      enum: ["DUE_SOON", "DUE_TODAY", "OVERDUE", "FINE_ISSUED", "RESERVATION_READY", "ANNOUNCEMENT"],
+      enum: [
+        "DUE_SOON",
+        "DUE_TODAY",
+        "OVERDUE",
+        "FINE_ISSUED",
+        "RESERVATION_READY",
+        "RESERVATION_APPROVED",
+        "RESERVATION_REJECTED",
+        "ANNOUNCEMENT",
+      ],
       required: true,
     },
     message: { type: String, required: true },

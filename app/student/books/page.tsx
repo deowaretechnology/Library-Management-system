@@ -15,7 +15,7 @@ export default async function StudentBooksPage({
   return (
     <div className="space-y-4 p-6">
       <h1 className="text-xl font-semibold text-slate-900">Search Books ({total})</h1>
-      {success && <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">Reservation requested — you'll be notified when a copy is ready.</p>}
+      {success && <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">Reservation requested — a librarian needs to approve it before it joins the queue. You'll be notified either way.</p>}
       {error && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{decodeURIComponent(error)}</p>}
 
       <form className="flex gap-2" action="/student/books">
