@@ -79,6 +79,19 @@ export async function getOverdueTransactions() {
     .lean();
 }
 
+// All currently-issued copies (overdue or not) with who holds them — same
+// "who has what" info already visible on the Issue Book/Return Book pages,
+// so it's fair game for the staff-facing AI assistant's context too.
+export async function getActiveTransactions(limit = 60) {
+  await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  await connectToDatabase();
+  return BorrowTransaction.find({ status: "ACTIVE" })
+    .sort({ dueDate: 1 })
+    .limit(limit)
+    .populate("studentId", "name studentId phone")
+    .lean();
+}
+
 export async function getDueSoonTransactions() {
   await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
   await connectToDatabase();

@@ -2,7 +2,7 @@
 
 import { getSession } from "@/lib/auth/session";
 import { searchCatalog } from "@/lib/actions/catalog";
-import { getDashboardStats, getOverdueTransactions } from "@/lib/actions/dashboard";
+import { getDashboardStats, getOverdueTransactions, getActiveTransactions } from "@/lib/actions/dashboard";
 import { getStudentDetail } from "@/lib/actions/students";
 
 export type AssistantChatMessage = { role: "user" | "assistant"; content: string };
@@ -91,7 +91,13 @@ Pending fines: ₹${pendingFineTotal}`;
     scopeNote =
       "You are answering a STUDENT. Only THEIR OWN data is included below — you have no access to any other student's records, fines, or borrowing history, and must never guess or make up such data. If asked about another student, say you can only help with their own account.";
   } else {
-    const [stats, overdue] = await Promise.all([getDashboardStats(), getOverdueTransactions()]);
+    const [stats, overdue, active] = await Promise.all([
+      getDashboardStats(),
+      getOverdueTransactions(),
+      getActiveTransactions(),
+    ]);
+
+    const overdueIds = new Set((overdue as any[]).map((o) => String(o._id)));
 
     personalContext = `Library-wide stats:
 - Total students: ${stats.totalStudents}
@@ -101,16 +107,16 @@ Pending fines: ₹${pendingFineTotal}`;
 - Pending fines (total): ₹${stats.pendingFineTotal}
 - Currently inside the library: ${stats.currentlyInside}
 
-Overdue students (${overdue.length}, most overdue first):
+Currently issued books — who has what (${active.length}${active.length >= 60 ? "+, showing most urgent" : ""}):
 ${
-  overdue.length
-    ? (overdue as any[])
-        .slice(0, 25)
-        .map((o) => {
-          const title = titleByBookId.get(o.sanityBookId) ?? "Unknown title";
-          return `- ${o.studentId?.name ?? "Unknown"} (${o.studentId?.studentId ?? "?"}) — "${title}", due ${new Date(
-            o.dueDate
-          ).toLocaleDateString("en-IN")}`;
+  active.length
+    ? (active as any[])
+        .map((t) => {
+          const title = titleByBookId.get(t.sanityBookId) ?? "Unknown title";
+          const overdueTag = overdueIds.has(String(t._id)) ? " — OVERDUE" : "";
+          return `- ${t.studentId?.name ?? "Unknown"} (${t.studentId?.studentId ?? "?"}) — "${title}", due ${new Date(
+            t.dueDate
+          ).toLocaleDateString("en-IN")}${overdueTag}`;
         })
         .join("\n")
     : "None"
