@@ -147,6 +147,17 @@ jobs:
           echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
           cp "$APK_PATH" College-Library.apk
 
+      # Publish the signing certificate's SHA-256 in the release notes, so anyone can
+      # confirm the APK was signed with the library's own release key (not a
+      # throwaway CI debug key) without downloading and inspecting it.
+      - name: Read signing certificate fingerprint
+        id: cert
+        run: |
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          FP=$("$APKSIGNER" verify --print-certs College-Library.apk | grep -m1 "SHA-256 digest" | awk -F': ' '{print $2}')
+          echo "Signing certificate SHA-256: $FP"
+          echo "sha256=${FP:-unknown}" >> "$GITHUB_OUTPUT"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -163,6 +174,8 @@ jobs:
             Release build, version 1.0.${{ github.run_number }}. Android may show an
             "unknown source" warning on install, which is normal for apps not from
             the Play Store.
+
+            Signing certificate SHA-256: ${{ steps.cert.outputs.sha256 }}
 
             Commit: ${{ github.sha }}
           artifacts: College-Library.apk
