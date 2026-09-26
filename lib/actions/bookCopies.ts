@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { connectToDatabase } from "@/lib/db/mongodb";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createBookCopySchema, markLostDamagedSchema } from "@/validators/transactions";
+import { sanityReadClient } from "@/lib/sanity/client";
+import { bookTitleByIdQuery } from "@/lib/sanity/queries";
 import BookCopy from "@/models/BookCopy";
 import AuditLog from "@/models/AuditLog";
 import BorrowTransaction from "@/models/BorrowTransaction";
@@ -115,6 +117,55 @@ export async function listBookCopies(opts: { query?: string; status?: string; pa
 export async function getCopyByBarcode(barcode: string) {
   await connectToDatabase();
   return BookCopy.findOne({ barcode }).lean();
+}
+
+export type BookCopyLookup = {
+  barcode: string;
+  copyId: string;
+  status: string;
+  title: string;
+  authors: string[];
+  coverUrl: string | null;
+  canIssue: boolean;
+  issuedTo?: { name: string; libraryId: string; dueDate: Date };
+};
+
+/**
+ * Used by the Quick Issue counter flow: scan/type a book's barcode and show what it
+ * actually is (title, cover, availability) BEFORE issuing — so a mis-scan or a typo'd
+ * barcode surfaces as "wrong/unavailable book" instead of silently issuing whatever the
+ * barcode happened to match. `canIssue` is a display hint only; issueBook still does the
+ * real availability/reservation check server-side at the moment of issuing.
+ */
+export async function getBookCopyLookupAction(barcode: string): Promise<BookCopyLookup | null> {
+  await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+  await connectToDatabase();
+
+  const copy: any = await BookCopy.findOne({ barcode: barcode.trim() }).lean();
+  if (!copy) return null;
+
+  const book = await sanityReadClient.fetch(bookTitleByIdQuery, { id: copy.sanityBookId });
+
+  let issuedTo: BookCopyLookup["issuedTo"];
+  if (copy.status === "ISSUED") {
+    const txn: any = await BorrowTransaction.findOne({ bookCopyId: copy._id, status: { $in: ["ACTIVE", "OVERDUE"] } })
+      .populate("studentId", "name libraryId")
+      .lean();
+    if (txn?.studentId) {
+      issuedTo = { name: txn.studentId.name, libraryId: txn.studentId.libraryId, dueDate: txn.dueDate };
+    }
+  }
+
+  return {
+    barcode: copy.barcode,
+    copyId: copy.copyId,
+    status: copy.status,
+    title: book?.title ?? "Unknown title",
+    authors: book?.authors ?? [],
+    coverUrl: book?.coverUrl ?? null,
+    canIssue: copy.status === "AVAILABLE" || copy.status === "RESERVED",
+    issuedTo,
+  };
 }
 
 export async function markLostOrDamagedAction(formData: FormData) {

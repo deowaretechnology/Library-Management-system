@@ -11,6 +11,15 @@ export const bookByIdQuery = groq`
   }
 `;
 
+// Lighter than bookByIdQuery (no description/isbn/etc.) — for spots that just need to
+// show the book's identity, like the Quick Issue book-scan confirmation card.
+export const bookTitleByIdQuery = groq`
+  *[_type == "book" && _id == $id][0]{
+    _id, title, "coverUrl": coverImage.asset->url,
+    "authors": authors[]->name
+  }
+`;
+
 export const bookSearchQuery = groq`
   *[_type == "book" && (
     title match $term + "*" ||
