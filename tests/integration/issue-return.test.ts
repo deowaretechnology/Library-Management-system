@@ -56,7 +56,8 @@ async function seedStudent(overrides: Partial<{ studentId: string; libraryId: st
 
 async function seedCopy(overrides: Partial<{ barcode: string; copyId: string }> = {}) {
   return BookCopy.create({
-    copyId: overrides.copyId ?? "COPY-1",
+    // Derived from the barcode: copyId is unique too, and a fixed "COPY-1" collided from the second test on.
+    copyId: overrides.copyId ?? `COPY-${overrides.barcode ?? "BC-1"}`,
     sanityBookId: "book-1",
     barcode: overrides.barcode ?? "BC-1",
     accessionNumber: `ACC-${overrides.barcode ?? "BC-1"}`,
