@@ -42,28 +42,34 @@ export function QRScanner({
         // per-frame "no QR found yet" — expected while aiming the camera, ignore
       };
 
+      const describe = (err: unknown) =>
+        err instanceof Error ? `${err.name}: ${err.message}` : typeof err === "string" ? err : "unknown error";
+
       try {
         // Some Android WebViews mis-map facingMode to the wrong/no camera
-        // device — ask for the back camera first, but fall back to "any
-        // camera" rather than failing outright if that specific request
-        // doesn't resolve.
+        // device — ask for the back camera first.
         await scanner.start({ facingMode: "environment" }, scanConfig, onSuccess, onFrameError);
       } catch (firstErr) {
         if (cancelled) return;
+        // Fall back to whatever camera the device actually reports, by ID,
+        // instead of retrying with a facingMode guess.
         try {
-          await scanner.start({}, scanConfig, onSuccess, onFrameError);
+          const cameras = await Html5Qrcode.getCameras();
+          if (cancelled) return;
+          if (!cameras.length) {
+            setError("No camera was found on this device.");
+            return;
+          }
+          await scanner.start(cameras[0].id, scanConfig, onSuccess, onFrameError);
         } catch (secondErr) {
-          const err = secondErr ?? firstErr;
-          const detail =
-            err instanceof Error
-              ? `${err.name}: ${err.message}`
-              : typeof err === "string"
-                ? err
-                : "unknown error";
-          // TEMP: showing the real browser/WebView error so we can pinpoint
-          // the exact cause instead of guessing — safe to shorten back to a
-          // plain message once the root cause is confirmed fixed.
-          setError(`Could not access the camera (${detail}). Check the browser's camera permission and try again.`);
+          if (cancelled) return;
+          // TEMP: showing the real browser/WebView error (from both attempts)
+          // so we can pinpoint the exact cause instead of guessing — safe to
+          // shorten back to a plain message once the root cause is confirmed
+          // fixed.
+          setError(
+            `Could not access the camera. First try: ${describe(firstErr)}. Fallback: ${describe(secondErr)}.`
+          );
         }
       }
     })();
