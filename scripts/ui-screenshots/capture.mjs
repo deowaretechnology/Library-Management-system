@@ -166,11 +166,26 @@ async function openMobileMenu(page) {
 /* Mechanics                                                                   */
 /* -------------------------------------------------------------------------- */
 
+// A wait that times out on two pages in a row is evidently a property of the UI (a polling
+// widget, a decorative pulse), not slowness: from then on it gets a short timeout, so one such
+// change in the redesign can't push 80+ pages past the step timeout.
+const streak = { idle: 0, skeleton: 0 };
+
+/** Waits until the page looks finished. Returns notes about waits that gave up. */
 async function settle(page, extraMs = SETTLE_MS) {
-  await page.waitForLoadState("load", { timeout: 30_000 }).catch(() => {});
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  const notes = [];
+  await page.waitForLoadState("load", { timeout: 30_000 }).catch(() => notes.push("load event never fired"));
+  const idle = await page
+    .waitForLoadState("networkidle", { timeout: streak.idle >= 2 ? 2_000 : 15_000 })
+    .then(() => true, () => false);
+  streak.idle = idle ? 0 : streak.idle + 1;
+  if (!idle) notes.push("network never went idle");
   // app/admin|student/loading.tsx show PageSkeleton (animate-pulse) while a server component streams.
-  await page.waitForFunction(() => !document.querySelector(".animate-pulse"), undefined, { timeout: 10_000 }).catch(() => {});
+  const skeletonGone = await page
+    .waitForFunction(() => !document.querySelector(".animate-pulse"), undefined, { timeout: streak.skeleton >= 2 ? 1_000 : 10_000 })
+    .then(() => true, () => false);
+  streak.skeleton = skeletonGone ? 0 : streak.skeleton + 1;
+  if (!skeletonGone) notes.push("an .animate-pulse element was still on screen");
   await page
     .evaluate(async () => {
       const timeout = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -186,6 +201,7 @@ async function settle(page, extraMs = SETTLE_MS) {
     })
     .catch(() => {});
   await page.waitForTimeout(extraMs);
+  return notes;
 }
 
 /** Routes page events (JS errors, console errors, failed sub-requests) to the capture in progress. */
@@ -242,7 +258,7 @@ async function capture(page, tracker, vp, area, spec, results) {
   try {
     const response = await page.goto(BASE_URL + spec.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
     entry.status = response ? response.status() : null;
-    await settle(page);
+    entry.notes.push(...(await settle(page)));
     if (spec.action) await spec.action(page);
   } catch (err) {
     entry.problems.push(clip(`${err?.name ?? "Error"}: ${err?.message ?? err}`, 300));
@@ -458,10 +474,13 @@ async function main() {
   if (process.env.GITHUB_ACTIONS === "true") {
     console.log(`::notice title=UI screenshots::${esc(clip(summary, 3000))}`);
     for (const r of flagged.slice(0, 7)) {
-      const detail = [...r.problems, ...r.badResponses.map((b) => `sub-request ${b}`), ...r.consoleErrors.map((c) => `console: ${c}`)];
-      console.log(`::warning title=${escProp(`${r.viewport}/${r.name} ${r.url}`)}::${esc(clip(`HTTP ${r.status ?? "-"}; ${detail.join("\n")}`, 2000))}`);
+      const detail = [`HTTP ${r.status ?? "-"}`, ...r.problems.filter((p) => p !== `HTTP ${r.status}`), ...r.notes,
+        ...r.badResponses.map((b) => `sub-request ${b}`), ...r.consoleErrors.map((c) => `console: ${c}`)];
+      console.log(`::warning title=${escProp(`${r.viewport}/${r.name} ${r.url}`)}::${esc(detail.join("\n").slice(0, 2000))}`);
     }
-    const tail = flagged.length ? serverLogTail() : "";
+    // The server log explains crashes; a plain 404 (e.g. /catalog before it exists) needs no log.
+    const crashed = flagged.some((r) => !r.captured || r.problems.some((p) => !/^HTTP 404$/.test(p)));
+    const tail = crashed ? serverLogTail() : "";
     if (tail) console.log(`::warning title=next start log (tail)::${esc(tail)}`);
   }
 
