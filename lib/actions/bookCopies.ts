@@ -10,6 +10,8 @@ import { bookTitleByIdQuery } from "@/lib/sanity/queries";
 import BookCopy from "@/models/BookCopy";
 import AuditLog from "@/models/AuditLog";
 import BorrowTransaction from "@/models/BorrowTransaction";
+import Reservation from "@/models/Reservation";
+import Student from "@/models/Student";
 
 const STAFF_ROLES = ["SUPER_ADMIN", "LIBRARIAN"] as const;
 
@@ -122,11 +124,14 @@ export async function getCopyByBarcode(barcode: string) {
 export type BookCopyLookup = {
   barcode: string;
   copyId: string;
+  sanityBookId: string;
   status: string;
   title: string;
   authors: string[];
   coverUrl: string | null;
   canIssue: boolean;
+  canReserve: boolean;
+  alreadyReservedByStudent: boolean;
   issuedTo?: { name: string; libraryId: string; dueDate: Date };
 };
 
@@ -134,19 +139,30 @@ export type BookCopyLookup = {
  * Used by the Quick Issue counter flow: scan/type a book's barcode and show what it
  * actually is (title, cover, availability) BEFORE issuing — so a mis-scan or a typo'd
  * barcode surfaces as "wrong/unavailable book" instead of silently issuing whatever the
- * barcode happened to match. `canIssue` is a display hint only; issueBook still does the
- * real availability/reservation check server-side at the moment of issuing.
+ * barcode happened to match. `canIssue`/`canReserve` are display hints only; issueBook and
+ * reserveForStudentAction still do the real checks server-side at the moment of acting.
+ *
+ * `forStudentId` (the human studentId, e.g. "STU-2026-1001") is the student currently at
+ * the counter — passing it lets a RESERVED copy correctly show as issuable when it's held
+ * for THIS student, and lets an ISSUED copy offer "reserve it for them" instead.
  */
-export async function getBookCopyLookupAction(barcode: string): Promise<BookCopyLookup | null> {
+export async function getBookCopyLookupAction(barcode: string, forStudentId?: string): Promise<BookCopyLookup | null> {
   await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
   await connectToDatabase();
 
   const copy: any = await BookCopy.findOne({ barcode: barcode.trim() }).lean();
   if (!copy) return null;
 
-  const book = await sanityReadClient.fetch(bookTitleByIdQuery, { id: copy.sanityBookId });
+  const [book, student] = await Promise.all([
+    sanityReadClient.fetch(bookTitleByIdQuery, { id: copy.sanityBookId }),
+    forStudentId ? Student.findOne({ studentId: forStudentId }).lean() : Promise.resolve(null),
+  ]);
 
   let issuedTo: BookCopyLookup["issuedTo"];
+  let canIssue = copy.status === "AVAILABLE";
+  let canReserve = false;
+  let alreadyReservedByStudent = false;
+
   if (copy.status === "ISSUED") {
     const txn: any = await BorrowTransaction.findOne({ bookCopyId: copy._id, status: { $in: ["ACTIVE", "OVERDUE"] } })
       .populate("studentId", "name libraryId")
@@ -154,16 +170,37 @@ export async function getBookCopyLookupAction(barcode: string): Promise<BookCopy
     if (txn?.studentId) {
       issuedTo = { name: txn.studentId.name, libraryId: txn.studentId.libraryId, dueDate: txn.dueDate };
     }
+    if (student) {
+      const existing = await Reservation.findOne({
+        studentId: (student as any)._id,
+        sanityBookId: copy.sanityBookId,
+        status: { $in: ["PENDING", "READY"] },
+      }).lean();
+      if (existing) alreadyReservedByStudent = true;
+      else canReserve = true;
+    }
+  }
+
+  if (copy.status === "RESERVED" && student) {
+    const readyForThisStudent = await Reservation.findOne({
+      bookCopyId: copy._id,
+      status: "READY",
+      studentId: (student as any)._id,
+    }).lean();
+    if (readyForThisStudent) canIssue = true;
   }
 
   return {
     barcode: copy.barcode,
     copyId: copy.copyId,
+    sanityBookId: copy.sanityBookId,
     status: copy.status,
     title: book?.title ?? "Unknown title",
     authors: book?.authors ?? [],
     coverUrl: book?.coverUrl ?? null,
-    canIssue: copy.status === "AVAILABLE" || copy.status === "RESERVED",
+    canIssue,
+    canReserve,
+    alreadyReservedByStudent,
     issuedTo,
   };
 }

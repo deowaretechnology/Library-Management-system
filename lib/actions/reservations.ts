@@ -42,6 +42,50 @@ export async function reserveBookAction(formData: FormData) {
   redirect("/student/reservations?success=1");
 }
 
+/**
+ * Non-redirecting version of reserveBookAction, for the Quick Issue counter flow: when a
+ * scanned book turns out to be already issued to someone else, staff can reserve it for
+ * the student they're currently serving right there, instead of that student having to
+ * come back later and reserve it themselves from their own account.
+ */
+export async function reserveForStudentAction(
+  studentId: string,
+  sanityBookId: string
+): Promise<{ success: true } | { error: string }> {
+  try {
+    await requireRole(["SUPER_ADMIN", "LIBRARIAN", "LIBRARY_STAFF"]);
+    await connectToDatabase();
+
+    const student = await Student.findOne({ studentId });
+    if (!student) return { error: "Student not found." };
+
+    const availableCopies = await BookCopy.countDocuments({ sanityBookId, status: "AVAILABLE" });
+    if (availableCopies > 0) {
+      return { error: "A copy is available right now — issue it directly instead of reserving." };
+    }
+
+    const existing = await Reservation.findOne({
+      studentId: student._id,
+      sanityBookId,
+      status: { $in: ["PENDING", "READY"] },
+    });
+    if (existing) return { error: "This student already has a reservation for this title." };
+
+    await Reservation.create({
+      reservationId: `RES-${Date.now()}`,
+      studentId: student._id,
+      sanityBookId,
+      status: "PENDING",
+    });
+
+    revalidatePath("/admin/reservations");
+    revalidatePath("/student/reservations");
+    return { success: true };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
 export async function cancelReservationAction(formData: FormData) {
   const session = await requireRole(["STUDENT", "SUPER_ADMIN", "LIBRARIAN"]);
   const reservationId = String(formData.get("reservationId"));

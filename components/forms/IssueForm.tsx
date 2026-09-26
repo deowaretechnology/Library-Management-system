@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { CheckCircle2, AlertTriangle, RotateCcw, XCircle } from "lucide-react";
 import { issueBookAction } from "@/lib/actions/transactions";
 import { getBookCopyLookupAction, BookCopyLookup } from "@/lib/actions/bookCopies";
+import { reserveForStudentAction } from "@/lib/actions/reservations";
 import { getStudentIssueProfileAction, StudentIssueProfile } from "@/lib/actions/students";
 import { QRScanner } from "@/components/QRScanner";
 
@@ -22,6 +23,8 @@ export function IssueForm() {
   const [bookLookup, setBookLookup] = useState<BookCopyLookup | null>(null);
   const [bookLookingUp, setBookLookingUp] = useState(false);
   const [bookLookupError, setBookLookupError] = useState<string | null>(null);
+  const [reserveError, setReserveError] = useState<string | null>(null);
+  const [reserveSuccess, setReserveSuccess] = useState<string | null>(null);
 
   async function lookupStudent(id: string) {
     const trimmed = id.trim();
@@ -42,12 +45,14 @@ export function IssueForm() {
 
   async function lookupBook(barcode: string) {
     const trimmed = barcode.trim();
-    if (!trimmed) return;
+    if (!trimmed || !profile) return;
     setBookLookingUp(true);
     setBookLookupError(null);
     setIssueError(null);
+    setReserveError(null);
+    setReserveSuccess(null);
     try {
-      const result = await getBookCopyLookupAction(trimmed);
+      const result = await getBookCopyLookupAction(trimmed, profile.studentId);
       if (!result) {
         setBookLookupError("No book copy found for that barcode.");
         return;
@@ -63,6 +68,22 @@ export function IssueForm() {
     setBarcodeInput("");
     setBookLookupError(null);
     setIssueError(null);
+    setReserveError(null);
+  }
+
+  function confirmReserve() {
+    if (!profile || !bookLookup) return;
+    setReserveError(null);
+    startTransition(async () => {
+      const result = await reserveForStudentAction(profile.studentId, bookLookup.sanityBookId);
+      if ("error" in result) {
+        setReserveError(result.error);
+        return;
+      }
+      setBookLookup(null);
+      setBarcodeInput("");
+      setReserveSuccess(`"${bookLookup.title}" reserved for ${profile.name} — they'll be notified when a copy is returned.`);
+    });
   }
 
   function confirmIssue() {
@@ -95,6 +116,8 @@ export function IssueForm() {
     setIssueSuccess(null);
     setBookLookup(null);
     setBookLookupError(null);
+    setReserveError(null);
+    setReserveSuccess(null);
   }
 
   // Step 1 — identify the student
@@ -204,6 +227,11 @@ export function IssueForm() {
               <CheckCircle2 className="h-3.5 w-3.5" /> {issueSuccess} Ready for the next book — scan or type another barcode.
             </p>
           )}
+          {reserveSuccess && (
+            <p className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700">
+              <CheckCircle2 className="h-3.5 w-3.5" /> {reserveSuccess}
+            </p>
+          )}
           {bookLookupError && <p className="text-xs text-red-600">{bookLookupError}</p>}
         </div>
       )}
@@ -236,8 +264,13 @@ export function IssueForm() {
                     <XCircle className="h-3.5 w-3.5" />
                     {bookLookup.status === "ISSUED" && bookLookup.issuedTo
                       ? `Already issued to ${bookLookup.issuedTo.name} (${bookLookup.issuedTo.libraryId})`
-                      : `Not available — ${bookLookup.status.toLowerCase()}`}
+                      : bookLookup.status === "ISSUED"
+                        ? "Already issued to another student"
+                        : `Not available — ${bookLookup.status.toLowerCase()}`}
                   </p>
+                )}
+                {bookLookup.alreadyReservedByStudent && (
+                  <p className="mt-1.5 text-xs text-slate-500">{profile.name} already has a reservation for this title.</p>
                 )}
               </div>
             </div>
@@ -261,8 +294,19 @@ export function IssueForm() {
                 {pending ? "Issuing…" : `Issue to ${profile.name}`}
               </button>
             )}
+            {bookLookup.canReserve && (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={confirmReserve}
+                className="flex-1 rounded-md border border-brand-600 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-60"
+              >
+                {pending ? "Reserving…" : `Reserve for ${profile.name}`}
+              </button>
+            )}
           </div>
           {issueError && <p className="text-xs text-red-600">{issueError}</p>}
+          {reserveError && <p className="text-xs text-red-600">{reserveError}</p>}
         </div>
       )}
 
