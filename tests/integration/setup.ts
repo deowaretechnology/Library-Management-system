@@ -15,6 +15,14 @@ vi.mock("next/headers", () => ({
   headers: async () => new Headers(),
 }));
 
+// Server actions call revalidatePath/revalidateTag, which need Next's request store —
+// irrelevant to what these tests check (database state), so they're no-ops here.
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+  revalidateTag: vi.fn(),
+  unstable_cache: (fn: unknown) => fn,
+}));
+
 beforeEach(() => {
   cookieStore.clear();
 });

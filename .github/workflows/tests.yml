@@ -1,0 +1,107 @@
+name: Tests
+
+# Type-check + unit tests + integration tests against a REAL MongoDB replica set
+# (mongodb-memory-server downloads the mongod binary on the runner). The integration
+# suite exercises the transaction/race-condition/queue logic end to end, which can't
+# be verified by reading the code alone.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "lib/**"
+      - "models/**"
+      - "validators/**"
+      - "components/**"
+      - "middleware.ts"
+      - "tests/**"
+      - "vitest*.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # 24.04: mongodb-memory-server maps it to MongoDB's ubuntu2204 build for 7.x.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        id: typecheck
+        run: |
+          set -o pipefail
+          npx tsc --noEmit 2>&1 | tee tsc.log
+
+      - name: Unit tests
+        id: unit
+        if: success() || failure()
+        run: |
+          set -o pipefail
+          npx vitest run --reporter=default --reporter=github-actions --reporter=json --outputFile.json=unit-results.json 2>&1 | tee unit.log
+
+      - name: Integration tests (real MongoDB)
+        id: integration
+        if: success() || failure()
+        run: |
+          set -o pipefail
+          npx vitest run --config vitest.integration.config.ts --reporter=default --reporter=github-actions --reporter=json --outputFile.json=integration-results.json 2>&1 | tee integration.log
+
+      # Annotations are visible on the run page (and via the API) without opening logs.
+      - name: Summarise results
+        if: always()
+        run: |
+          node - <<'JS'
+          const fs = require("fs");
+          const esc = (s) => String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+          const prop = (s) => esc(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
+          const strip = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "");
+          const lines = [];
+          for (const [label, file] of [["Unit", "unit-results.json"], ["Integration", "integration-results.json"]]) {
+            if (!fs.existsSync(file)) { lines.push(`${label}: no results (step did not finish)`); continue; }
+            const r = JSON.parse(fs.readFileSync(file, "utf8"));
+            lines.push(`${label}: ${r.numPassedTests} passed, ${r.numFailedTests} failed, ${r.numPendingTests} skipped (of ${r.numTotalTests})`);
+            for (const f of r.testResults || []) {
+              if (f.status === "failed" && (!f.assertionResults || f.assertionResults.length === 0)) {
+                console.log(`::error title=${prop(label + " suite failed to run")}::${esc(strip(f.message || "").slice(0, 2500))}`);
+              }
+              for (const t of f.assertionResults || []) {
+                if (t.status === "failed") {
+                  const msg = strip((t.failureMessages || []).join("\n")).split("\n").slice(0, 25).join("\n");
+                  console.log(`::error title=${prop(label + " FAIL: " + t.title)}::${esc(msg.slice(0, 2500))}`);
+                }
+              }
+            }
+          }
+          console.log(`::notice title=Test summary::${esc(lines.join("\n"))}`);
+          JS
+
+      - name: Report setup/type errors
+        if: failure()
+        run: |
+          for f in tsc.log unit.log integration.log; do
+            [ -f "$f" ] || continue
+            TAIL=$(tail -n 60 "$f" | sed 's/\x1b\[[0-9;]*m//g' | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' | head -c 6000)
+            echo "::warning title=Log tail ${f}::$TAIL"
+          done

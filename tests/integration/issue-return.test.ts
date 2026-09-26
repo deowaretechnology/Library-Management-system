@@ -11,13 +11,21 @@ import Fine from "@/models/Fine";
 import LibrarySettings from "@/models/LibrarySettings";
 
 async function seedLibrarian() {
-  const user = await User.create({
-    role: "LIBRARIAN",
-    email: "librarian@test.local",
-    passwordHash: "not-checked-in-this-test",
-    name: "Test Librarian",
-    status: "ACTIVE",
-  });
+  // Upsert: every test calls this, and User.email is unique — a plain create() failed with
+  // a duplicate-key error from the second test on.
+  const user = await User.findOneAndUpdate(
+    { email: "librarian@test.local" },
+    {
+      $setOnInsert: {
+        role: "LIBRARIAN",
+        email: "librarian@test.local",
+        passwordHash: "not-checked-in-this-test",
+        name: "Test Librarian",
+        status: "ACTIVE",
+      },
+    },
+    { upsert: true, new: true }
+  );
   await createSession({ userId: user._id.toString(), role: "LIBRARIAN", name: user.name });
   return user;
 }
@@ -109,9 +117,11 @@ describe("issueBook / returnBook integration", () => {
 
     // Backdate the due date to simulate a 3-day-overdue return, same as a real librarian
     // would encounter — the point of this test is the fine math, not the passage of time.
+    // (One minute short of 3 full days: overdue days round UP, so backdating by exactly 3
+    // days and returning a few ms later would correctly count as 4.)
     await BorrowTransaction.updateOne(
       { transactionId },
-      { $set: { dueDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) } }
+      { $set: { dueDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000 + 60_000) } }
     );
 
     const result = await returnBook({ barcode: "BC-LATE" });

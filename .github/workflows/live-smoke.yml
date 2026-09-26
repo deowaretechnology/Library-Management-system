@@ -1,0 +1,33 @@
+name: Live site smoke test
+
+# Read-only checks of the production site (see scripts/smoke-test.sh). Runs automatically
+# after every successful PRODUCTION deploy from Vercel, and can be started by hand.
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Base URL to test"
+        required: false
+        default: "https://library-management-system-six-pi-17.vercel.app"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/smoke-test.sh"
+      - ".github/workflows/live-smoke.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name != 'deployment_status' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Probe the live site
+        env:
+          BASE_URL: ${{ github.event.inputs.url || 'https://library-management-system-six-pi-17.vercel.app' }}
+        run: bash scripts/smoke-test.sh "$BASE_URL"

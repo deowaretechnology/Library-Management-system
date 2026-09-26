@@ -7,6 +7,8 @@
  * createPaymentLink throws a clear "not configured" error rather than failing silently —
  * callers should catch that and tell the student to pay at the counter instead.
  */
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 const RAZORPAY_API = "https://api.razorpay.com/v1/payment_links";
 
 export function isPaymentGatewayConfigured() {
@@ -62,13 +64,9 @@ export async function createPaymentLink(opts: {
 /** Verifies an incoming Razorpay webhook signature. Returns false on any mismatch. */
 export function verifyWebhookSignature(rawBody: string, signature: string | null): boolean {
   if (!signature || !process.env.RAZORPAY_WEBHOOK_SECRET) return false;
-  const crypto = require("crypto") as typeof import("crypto");
-  const expected = crypto
-    .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET)
-    .update(rawBody)
-    .digest("hex");
+  const expected = createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET).update(rawBody).digest("hex");
   try {
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
   } catch {
     return false; // length mismatch etc.
   }
