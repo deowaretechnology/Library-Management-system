@@ -154,7 +154,19 @@ ${personalContext}`;
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error("Gemini API error:", res.status, body);
-      return { error: "The assistant couldn't reach the AI service right now — try again in a moment." };
+      let detail = "";
+      try {
+        detail = JSON.parse(body)?.error?.message ?? "";
+      } catch {
+        // body wasn't JSON — ignore, we'll just show the status code
+      }
+      // TEMP diagnostic detail appended so we can pinpoint the real cause from a
+      // screenshot without server log access — remove once this is confirmed working.
+      return {
+        error: `The assistant couldn't reach the AI service right now (status ${res.status}${
+          detail ? `: ${detail}` : ""
+        }) — try again in a moment.`,
+      };
     }
 
     const data = await res.json();
