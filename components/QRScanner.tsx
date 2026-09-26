@@ -33,20 +33,38 @@ export function QRScanner({
       const scanner = new Html5Qrcode(elementId);
       scannerRef.current = scanner;
 
+      const scanConfig = { fps: 10, qrbox: { width: 220, height: 220 } };
+      const onSuccess = (decodedText: string) => {
+        onScan(decodedText.trim());
+        setOpen(false);
+      };
+      const onFrameError = () => {
+        // per-frame "no QR found yet" — expected while aiming the camera, ignore
+      };
+
       try {
-        await scanner.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 220, height: 220 } },
-          (decodedText) => {
-            onScan(decodedText.trim());
-            setOpen(false);
-          },
-          () => {
-            // per-frame "no QR found yet" — expected while aiming the camera, ignore
-          }
-        );
-      } catch {
-        setError("Could not access the camera. Check the browser's camera permission and try again.");
+        // Some Android WebViews mis-map facingMode to the wrong/no camera
+        // device — ask for the back camera first, but fall back to "any
+        // camera" rather than failing outright if that specific request
+        // doesn't resolve.
+        await scanner.start({ facingMode: "environment" }, scanConfig, onSuccess, onFrameError);
+      } catch (firstErr) {
+        if (cancelled) return;
+        try {
+          await scanner.start({}, scanConfig, onSuccess, onFrameError);
+        } catch (secondErr) {
+          const err = secondErr ?? firstErr;
+          const detail =
+            err instanceof Error
+              ? `${err.name}: ${err.message}`
+              : typeof err === "string"
+                ? err
+                : "unknown error";
+          // TEMP: showing the real browser/WebView error so we can pinpoint
+          // the exact cause instead of guessing — safe to shorten back to a
+          // plain message once the root cause is confirmed fixed.
+          setError(`Could not access the camera (${detail}). Check the browser's camera permission and try again.`);
+        }
       }
     })();
 
